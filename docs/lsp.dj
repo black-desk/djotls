@@ -37,7 +37,7 @@ vim.lsp.config('djot', {
     end
     map('gd', vim.lsp.buf.definition, 'Djot: go to definition')
     map('<leader>lr', vim.lsp.buf.references, 'Djot: references')
-    map('<leader>ln', vim.lsp.buf.rename, 'Djot: rename heading or ID')
+    map('<leader>ln', vim.lsp.buf.rename, 'Djot: rename symbol')
     map('<leader>ls', vim.lsp.buf.document_symbol, 'Djot: heading outline')
     map('<leader>lf', function()
       vim.lsp.buf.format({ bufnr = bufnr, name = 'djot', async = false })
@@ -134,8 +134,17 @@ The server supports:
   locations. Search matches name substrings without case sensitivity,
   including paths and anchors.
 
-- Definition navigation and references within the open document for link
-  labels, footnotes, explicit IDs and implicit heading references.
+- Definition navigation within the open document for link labels, footnotes,
+  explicit IDs and implicit heading references.
+
+- Workspace references for headings and explicit IDs through
+  `textDocument/references`. Results include local references, cross-file
+  inline links, images, reference-definition destinations and reference-link
+  uses. Direct destinations select the fragment; indirect uses select the
+  label. Query from a heading, ID, fragment or link text. Link labels and
+  footnotes retain document scope; querying a reference link label finds uses
+  of that label, while its text finds links to the destination anchor.
+  `includeDeclaration` adds the selected definition once.
 
 - Cross-file definition navigation for local inline links, reference-link
   text and reference-definition destinations. Relative paths resolve from
@@ -160,7 +169,16 @@ The server supports:
   names are literal text; inline punctuation is escaped, replacing the old
   heading's inline formatting. Renames that would remove an embedded ID,
   create a duplicate anchor or retarget an implicit heading reference are
-  rejected. Ordinary reference labels and footnotes cannot be renamed yet.
+  rejected.
+
+- Document-local reference-label and footnote rename, from a definition or
+  resolved use. Only references bound to the selected definition change;
+  duplicate definitions retain their existing precedence. Link text and
+  destinations are preserved, including collapsed links: `[Old][]` becomes
+  `[Old][New]`. Label whitespace is normalized and inline label punctuation
+  is escaped as needed. Conflicting names, syntax changes and names that
+  would capture other references are rejected. Link labels and footnotes
+  have separate namespaces.
 
 - File and folder moves through `workspace/willRenameFiles` and
   `workspace/didRenameFiles`. Incoming links follow moved targets, and
@@ -238,7 +256,7 @@ registrations for `.dj` changes and file creation/deletion. Workspace-folder
 and file-change notifications refresh the index and open-document diagnostics.
 Opening, editing, saving or closing a buffer also rechecks links in all open
 documents. Without file watching, saving a buffer refreshes link diagnostics.
-Searches, destination completion and cross-file navigation refresh disk state
+Searches, destination completion, references and cross-file navigation refresh disk state
 and Git ignore rules on demand.
 Discovery and disk analysis run on a blocking worker; unchanged source reuses
 its parsed snapshot. Each refresh still enumerates and reads repository files.
@@ -276,8 +294,12 @@ edits, perform the move and send `didRenameFiles` (when advertised). A terminal
 `mv` or file-watch notification alone cannot repair links automatically.
 The server uses the standard file-operation callbacks in `tower-lsp-server`.
 
-Find references remains document-local. An incomplete delimiter alone is not
-reported as a syntax error.
+Workspace references use the same index and open-buffer snapshots as rename.
+Linked targets outside the index are read on demand, including their own local
+references; incoming links in other unindexed, unopened files are not discovered.
+Results are deduplicated and sorted by URI and source position. If open buffers
+change during the query, the client receives `ContentModified` and can retry.
+An incomplete delimiter alone is not reported as a syntax error.
 
 Each document version is analyzed in full. Its snapshot retains source,
 parser events, headings, definitions, references and document links. Context is calculated
@@ -314,3 +336,9 @@ Parser conformance needs
 the pinned djot.js submodule and Node.js; its harness builds the reference when
 needed.
 The Rust server has no JavaScript runtime dependency.
+
+Workspace-reference tests additionally cover direct and indirect incoming
+links, images, duplicate anchor identities, encoded URI aliases, unsaved
+changes, out-of-index targets and document-local label/footnote scope. Local
+rename tests apply the returned edits and check display text, Unicode names,
+normalized whitespace, duplicate precedence and rejected reference capture.
