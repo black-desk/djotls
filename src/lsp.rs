@@ -6,6 +6,7 @@ use djotls::{
     analysis::{
         links::{Resolution, Resolver},
         moves::{self, Moves},
+        references::References,
         rename::{FileEdits, Rename},
         text::LineIndex,
         CompletionKind, Document, Severity, SymbolKind as DjotSymbolKind,
@@ -169,7 +170,7 @@ impl Backend {
         ))
     }
 
-    fn check_rename_snapshots(&self, open: &HashMap<Uri, Arc<Snapshot>>) -> Result<()> {
+    fn check_snapshots(&self, open: &HashMap<Uri, Arc<Snapshot>>) -> Result<()> {
         let current = self.documents.read().unwrap();
         if current.len() != open.len()
             || open
@@ -385,7 +386,7 @@ impl LanguageServer for Backend {
             .await
             .map_err(|_| Error::internal_error())?
             .map_err(Error::invalid_params)?;
-        self.check_rename_snapshots(&open)?;
+        self.check_snapshots(&open)?;
         Ok(Some(self.workspace_edit(edits, &open, None)?))
     }
 
@@ -864,7 +865,7 @@ impl LanguageServer for Backend {
         })
         .await
         .map_err(|_| Error::internal_error())?;
-        self.check_rename_snapshots(&open)?;
+        self.check_snapshots(&open)?;
         Ok(target.map(
             |(selection, placeholder)| PrepareRenameResponse::RangeWithPlaceholder {
                 range: range(&source.doc, selection),
@@ -891,7 +892,7 @@ impl LanguageServer for Backend {
                     .map(|edits| (edits, None));
             }
             let target = moves::link_path(&source_doc, &uri, at)
-                .ok_or("No heading, explicit ID or existing local link path at this position")?;
+                .ok_or("No symbol or existing local link path at this position")?;
             if !can_move {
                 return Err(
                     "File rename requires documentChanges and the rename resource operation".into(),
@@ -932,7 +933,7 @@ impl LanguageServer for Backend {
         .await
         .map_err(|_| Error::internal_error())?
         .map_err(Error::invalid_params)?;
-        self.check_rename_snapshots(&open)?;
+        self.check_snapshots(&open)?;
         Ok(Some(self.workspace_edit(edits, &open, resource)?))
     }
 
@@ -958,27 +959,31 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let p = params.text_document_position;
-        let snapshot = self.snapshot(&p.text_document.uri)?;
-        let doc = &snapshot.doc;
-        let Some(target) = doc.target_at(offset(doc, p.position)?) else {
-            return Ok(None);
-        };
-        let mut locations: Vec<_> = doc
-            .references_to(target)
-            .map(|r| {
-                Location::new(
-                    p.text_document.uri.clone(),
-                    range(doc, r.name_range.clone()),
-                )
+        let (documents, open) = self.edit_context().await?;
+        let snapshot = open
+            .get(&p.text_document.uri)
+            .ok_or_else(|| Error::invalid_params("Document is not open"))?;
+        let at = offset(&snapshot.doc, p.position)?;
+        let uri = p.text_document.uri.as_str().to_owned();
+        let locations = tokio::task::spawn_blocking(move || {
+            References::new(documents).find(&uri, at, params.context.include_declaration)
+        })
+        .await
+        .map_err(|_| Error::internal_error())?;
+        self.check_snapshots(&open)?;
+        locations
+            .map(|locations| {
+                locations
+                    .into_iter()
+                    .map(|location| {
+                        Ok(Location::new(
+                            location.uri.parse().map_err(|_| Error::internal_error())?,
+                            range(&location.document, location.range),
+                        ))
+                    })
+                    .collect()
             })
-            .collect();
-        if params.context.include_declaration {
-            locations.push(Location::new(
-                p.text_document.uri,
-                range(doc, doc.definitions[target].name_range.clone()),
-            ));
-        }
-        Ok(Some(locations))
+            .transpose()
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {

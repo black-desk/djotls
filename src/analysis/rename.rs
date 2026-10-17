@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Chen Linxuan <me@black-desk.cn>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Plan semantic heading/ID renames against immutable workspace snapshots.
+//! Plan semantic symbol renames against immutable workspace snapshots.
 //! This module returns source edits; it never writes files.
 use super::{
     links::{Resolution, Resolver},
@@ -13,6 +13,7 @@ use std::{collections::HashMap, ops::Range, sync::Arc};
 enum Kind {
     Heading(usize),
     Anchor(usize),
+    Local(usize),
 }
 
 pub struct Target {
@@ -77,11 +78,11 @@ impl Rename {
                 .position(|h| h.selection == d.name_range)
                 .map(Kind::Heading)
                 .unwrap_or(Kind::Anchor(definition)),
-            _ => return None,
+            SymbolKind::Link | SymbolKind::Footnote => Kind::Local(definition),
         };
         let placeholder = match kind {
             Kind::Heading(i) => doc.headings[i].title.clone(),
-            Kind::Anchor(_) => d.key.clone(),
+            Kind::Anchor(_) | Kind::Local(_) => d.key.clone(),
         };
         Some(Target {
             uri: uri.into(),
@@ -93,7 +94,8 @@ impl Rename {
     }
 
     /// A link fragment can initiate the same rename as its anchor definition.
-    /// Paths, ordinary link labels, code and unresolved targets are excluded.
+    /// Paths, code and unresolved targets are excluded. Labels and footnotes
+    /// select their document-local definitions.
     pub fn target(&mut self, uri: &str, at: usize) -> Option<Target> {
         let doc = self.documents.get(uri)?.clone();
         if let Some(reference) = doc.references.iter().find(|r| r.name_range.contains(&at)) {
@@ -132,7 +134,7 @@ impl Rename {
             .or_else(|| {
                 doc.definitions
                     .iter()
-                    .position(|d| d.kind == SymbolKind::Heading && d.name_range.contains(&at))
+                    .position(|d| d.name_range.contains(&at))
             })?;
         Self::definition_target(uri, doc, definition)
     }
@@ -148,10 +150,14 @@ impl Rename {
         if name == target.placeholder {
             return Ok(HashMap::new());
         }
+        if let Kind::Local(index) = target.kind {
+            return Self::plan_local(&target, index, name);
+        }
         let old = &target.document;
         let (primary, replacement) = match target.kind {
             Kind::Heading(i) => (old.headings[i].selection.clone(), inline_text(name)),
             Kind::Anchor(i) => (old.definitions[i].name_range.clone(), name.to_string()),
+            Kind::Local(_) => unreachable!(),
         };
         let mut source = old.source.clone();
         source.replace_range(primary.clone(), &replacement);
@@ -177,6 +183,7 @@ impl Rename {
                 .iter()
                 .position(|&j| j == i)
                 .is_some_and(|j| renamed.definitions[after[j]].key == name),
+            Kind::Local(_) => unreachable!(),
         };
         if !valid {
             return Err("The new name is not valid Djot heading text or an ID".into());
@@ -252,13 +259,8 @@ impl Rename {
                         // Expand [Old][] to [Old][New], preserving display
                         // text. In particular, a reference inside a different
                         // heading must not change that heading's own title/ID.
-                        let range = if reference.name_range.end < reference.full_range.end - 1 {
-                            reference.full_range.end - 1..reference.full_range.end - 1
-                        } else {
-                            reference.name_range.clone()
-                        };
                         edits.push(Edit {
-                            range,
+                            range: reference.label_range(),
                             text: inline_text(&key),
                         });
                     }
@@ -323,5 +325,86 @@ impl Rename {
             }
         }
         Ok(result)
+    }
+
+    fn plan_local(
+        target: &Target,
+        index: usize,
+        name: &str,
+    ) -> Result<HashMap<String, FileEdits>, String> {
+        let doc = &target.document;
+        let selected = &doc.definitions[index];
+        let key = normalize_label(name);
+        if key == selected.key {
+            return Ok(HashMap::new());
+        }
+        let mut edits = vec![Edit {
+            range: selected.name_range.clone(),
+            text: key.clone(),
+        }];
+        for reference in doc.references.iter().filter(|r| r.target == Some(index)) {
+            edits.push(Edit {
+                range: reference.label_range(),
+                text: if selected.kind == SymbolKind::Link {
+                    inline_text(&key)
+                } else {
+                    key.clone()
+                },
+            });
+        }
+        edits.sort_by_key(|e| (e.range.start, e.range.end));
+        let mut source = doc.source.clone();
+        for edit in edits.iter().rev() {
+            source.replace_range(edit.range.clone(), &edit.text);
+        }
+        let updated = Document::new(source);
+        // Reparse the actual edits and preserve every binding, including
+        // unresolved references and first/last-definition precedence. This also
+        // rejects names that introduce Djot syntax or capture heading labels.
+        let definitions_valid = doc.definitions.len() == updated.definitions.len()
+            && doc
+                .definitions
+                .iter()
+                .zip(&updated.definitions)
+                .enumerate()
+                .all(|(i, (a, b))| {
+                    let expected = if i == index { &key } else { &a.key };
+                    a.kind == b.kind && a.destination == b.destination && b.key == *expected
+                });
+        let references_valid = doc.references.len() == updated.references.len()
+            && doc
+                .references
+                .iter()
+                .zip(&updated.references)
+                .all(|(a, b)| {
+                    let expected = if a.target == Some(index) {
+                        &key
+                    } else {
+                        &a.key
+                    };
+                    a.kind == b.kind && a.target == b.target && b.key == *expected
+                });
+        let headings_valid = doc.headings.len() == updated.headings.len()
+            && doc
+                .headings
+                .iter()
+                .zip(&updated.headings)
+                .all(|(a, b)| a.title == b.title && a.id == b.id);
+        let collision = doc.definitions.iter().enumerate().any(|(i, d)| {
+            i != index
+                && d.key == key
+                && (d.kind == selected.kind
+                    || selected.kind == SymbolKind::Link && d.kind == SymbolKind::Heading)
+        });
+        if collision || !definitions_valid || !references_valid || !headings_valid {
+            return Err("The new label is invalid, conflicts with a definition or would retarget references".into());
+        }
+        Ok(HashMap::from([(
+            target.uri.clone(),
+            FileEdits {
+                document: doc.clone(),
+                edits,
+            },
+        )]))
     }
 }

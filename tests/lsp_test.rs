@@ -2076,8 +2076,6 @@ fn stdio_rename_rejects_invalid_names_conflicts_and_non_symbols() {
         "code",
         "other.dj",
         "absent",
-        "label]",
-        "n]",
         "absent.dj",
         "anchor)",
         "external)",
@@ -2698,5 +2696,479 @@ fn stdio_file_moves_update_absolute_links_in_non_file_buffers() {
         format!("# Draft\n\n[file]({new}#anchor) [local](#Draft)\n")
     );
     assert!(symbol_names(&mut server).contains(&"Draft".to_string()));
+    server.shutdown();
+}
+
+fn references_uri(
+    server: &mut Server,
+    uri: &str,
+    source: &str,
+    at: usize,
+    declaration: bool,
+) -> Value {
+    server.request("textDocument/references", json!({"textDocument":{"uri":uri},"position":source_position(source, at),"context":{"includeDeclaration":declaration}}))
+}
+
+#[test]
+fn stdio_workspace_references_include_direct_indirect_and_image_links() {
+    let repo = Repository::new();
+    let target = "{#stable}\n# Title\n\n[Title][] [local](#stable)\n";
+    let source = "[direct](../guide%20x.dj?mode=1#stable) ![image](../guide%20x.dj#stable) [text][r] ![alt][r] [wrong](other.dj#stable) [web](https://example.com/#stable)\n\n[r]: ../guide%20x.dj#stable\n";
+    repo.write("guide x.dj", target);
+    repo.write("docs/links.dj", source);
+    repo.write("docs/other.dj", "{#stable}\n# Other\n");
+    let target_uri = repo.uri("guide x.dj");
+    let source_uri = repo.uri("docs/links.dj");
+    let mut server = Server::start(true, true, None, Some(json!([repo.folder("")])));
+    open_uri(&mut server, &target_uri, target);
+    let refs = references_uri(
+        &mut server,
+        &target_uri,
+        target,
+        target.find("Title").unwrap(),
+        false,
+    );
+    let refs = refs.as_array().unwrap();
+    assert_eq!(refs.len(), 7, "{refs:?}");
+    let local: Vec<_> = refs
+        .iter()
+        .filter(|r| r["uri"] == target_uri)
+        .map(|r| range_text(target, &r["range"]))
+        .collect();
+    assert_eq!(local, ["Title", "stable"]);
+    let incoming: Vec<_> = refs
+        .iter()
+        .filter(|r| r["uri"] == source_uri)
+        .map(|r| range_text(source, &r["range"]))
+        .collect();
+    assert_eq!(incoming, ["stable", "stable", "r", "r", "stable"]);
+    let declared = references_uri(&mut server, &target_uri, target, 2, true);
+    assert_eq!(declared.as_array().unwrap().len(), 8);
+    assert!(declared
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["uri"] == target_uri && r["range"]["start"] == source_position(target, 2)));
+    // The queried link can resolve an unopened target. Labels keep their local
+    // identity; link text and inline destinations query the destination anchor.
+    server.notify(
+        "textDocument/didClose",
+        json!({"textDocument":{"uri":target_uri}}),
+    );
+    open_uri(&mut server, &source_uri, source);
+    for at in [
+        source.find("stable").unwrap(),
+        source.find("text").unwrap(),
+        source.rfind("stable").unwrap(),
+    ] {
+        assert_eq!(
+            references_uri(&mut server, &source_uri, source, at, false)
+                .as_array()
+                .unwrap(),
+            refs
+        );
+    }
+    let labels = references_uri(
+        &mut server,
+        &source_uri,
+        source,
+        source.find("[r]").unwrap() + 1,
+        true,
+    );
+    assert_eq!(labels.as_array().unwrap().len(), 3);
+    assert!(labels
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["uri"] == source_uri && range_text(source, &r["range"]) == "r"));
+    server.shutdown();
+}
+
+#[test]
+fn stdio_workspace_references_distinguish_duplicate_heading_and_id_targets() {
+    let repo = Repository::new();
+    let target = "# Same\n\n# Same\n\n{#dup}\n# First\n\n{#dup}\n# Last\n\n[Same][] [x](#dup)\n";
+    let source = "[a](target.dj#Same) [b](target.dj#Same-1) [c](target.dj#dup)\n";
+    repo.write("target.dj", target);
+    repo.write("links.dj", source);
+    let uri = repo.uri("target.dj");
+    let source_uri = repo.uri("links.dj");
+    let mut server = Server::start(true, true, None, Some(json!([repo.folder("")])));
+    open_uri(&mut server, &uri, target);
+    for (at, local, fragment) in [
+        (2, 1, "Same"),
+        (target.find("# Same\n\n{#").unwrap() + 2, 0, "Same-1"),
+        (target.find("First").unwrap(), 0, ""),
+        (target.find("Last").unwrap(), 1, "dup"),
+    ] {
+        let refs = references_uri(&mut server, &uri, target, at, false);
+        let refs = refs.as_array().unwrap();
+        assert_eq!(refs.iter().filter(|r| r["uri"] == uri).count(), local);
+        let incoming: Vec<_> = refs.iter().filter(|r| r["uri"] == source_uri).collect();
+        if fragment.is_empty() {
+            assert!(incoming.is_empty());
+        } else {
+            assert_eq!(incoming.len(), 1);
+            assert_eq!(range_text(source, &incoming[0]["range"]), fragment);
+        }
+    }
+    server.shutdown();
+}
+
+#[test]
+fn stdio_workspace_references_follow_unsaved_buffers_disk_and_encoded_uris() {
+    let repo = Repository::new();
+    let disk = "# Disk\n";
+    let unsaved = "# 草稿😀\n\n[草稿😀][] [local](#%E8%8D%89%E7%A8%BF%F0%9F%98%80)\n";
+    let source = "[x](guide%20x.dj#%E8%8D%89%E7%A8%BF%F0%9F%98%80)\n";
+    repo.write("guide x.dj", disk);
+    repo.write("links.dj", source);
+    let uri = repo.uri("guide x.dj").replace("guide", "%67uide");
+    let source_uri = repo.uri("links.dj");
+    let mut server = Server::start(true, true, None, Some(json!([repo.folder("")])));
+    open_uri(&mut server, &uri, unsaved);
+    let refs = references_uri(&mut server, &uri, unsaved, 2, true);
+    assert_eq!(refs.as_array().unwrap().len(), 4, "{refs}");
+    assert_eq!(
+        refs.as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["uri"] == uri)
+            .count(),
+        3
+    );
+    open_uri(&mut server, &source_uri, source);
+    let from_link = references_uri(
+        &mut server,
+        &source_uri,
+        source,
+        source.find('#').unwrap() + 1,
+        true,
+    );
+    assert_eq!(from_link, refs);
+    let empty_source = "no links\n";
+    server.notify("textDocument/didChange", json!({"textDocument":{"uri":source_uri,"version":2},"contentChanges":[{"text":empty_source}]}));
+    assert_eq!(
+        references_uri(&mut server, &uri, unsaved, 2, false)
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    server.notify(
+        "textDocument/didClose",
+        json!({"textDocument":{"uri":source_uri}}),
+    );
+    assert_eq!(
+        references_uri(&mut server, &uri, unsaved, 2, false)
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    repo.write("links.dj", "[x](guide%20x.dj#Disk)\n");
+    assert_eq!(
+        references_uri(&mut server, &uri, unsaved, 2, false)
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    server.notify("textDocument/didClose", json!({"textDocument":{"uri":uri}}));
+    open_uri(&mut server, &source_uri, "[x](guide%20x.dj#Disk)\n");
+    let refs = references_uri(
+        &mut server,
+        &source_uri,
+        "[x](guide%20x.dj#Disk)\n",
+        20,
+        true,
+    );
+    assert_eq!(refs.as_array().unwrap().len(), 2);
+    server.shutdown();
+}
+
+#[test]
+fn stdio_workspace_references_resolve_ignored_targets_and_new_files() {
+    let repo = Repository::new();
+    repo.write(".gitignore", "hidden.dj\n");
+    repo.write("hidden.dj", "# Hidden\n\n[self](#Hidden)\n");
+    let source = "[hidden](hidden.dj#Hidden) [new](new.dj#Draft) [missing](absent.dj#No) [web](https://example.com/#Hidden)\n";
+    repo.write("links.dj", source);
+    repo.write("other.dj", "[other](hidden.dj#Hidden)\n");
+    let uri = repo.uri("links.dj");
+    let mut server = Server::start(true, true, None, Some(json!([repo.folder("")])));
+    open_uri(&mut server, &uri, source);
+    assert_eq!(
+        references_uri(
+            &mut server,
+            &uri,
+            source,
+            source.find("#Hidden").unwrap() + 1,
+            false
+        )
+        .as_array()
+        .unwrap()
+        .len(),
+        3
+    );
+    open_uri(&mut server, &repo.uri("new.dj"), "# Draft\n");
+    assert_eq!(
+        references_uri(
+            &mut server,
+            &uri,
+            source,
+            source.find("#Draft").unwrap() + 1,
+            true
+        )
+        .as_array()
+        .unwrap()
+        .len(),
+        2
+    );
+    for needle in ["#No", "https://", "#Unresolved"] {
+        let at = source.find(needle).unwrap_or(source.len());
+        assert!(references_uri(&mut server, &uri, source, at, false).is_null());
+    }
+    server.shutdown();
+}
+
+#[test]
+fn stdio_local_label_and_footnote_renames_preserve_display_text_and_scope() {
+    let repo = Repository::new();
+    let source = "# [old][]\n\n[old][] [shown][old] ![alt][old] [^note] `[^note] [old][]`\n\n[old]: https://example.com/manual\n[^note]: Footnote with [link][old].\n";
+    repo.write("current.dj", source);
+    repo.write("other.dj", source);
+    let uri = repo.uri("current.dj");
+    // Exercise versioned edits as well as the ordinary changes fallback.
+    let mut server = file_operation_server(&repo, true, false);
+    open_uri(&mut server, &uri, source);
+    for (needle, name, expected) in [
+        ("[old]:", "new label", "# [old][new label]\n\n[old][new label] [shown][new label] ![alt][new label] [^note] `[^note] [old][]`\n\n[new label]: https://example.com/manual\n[^note]: Footnote with [link][new label].\n"),
+        ("[old][]", "new label", "# [old][new label]\n\n[old][new label] [shown][new label] ![alt][new label] [^note] `[^note] [old][]`\n\n[new label]: https://example.com/manual\n[^note]: Footnote with [link][new label].\n"),
+        ("[^note]", "注释😀", "# [old][]\n\n[old][] [shown][old] ![alt][old] [^注释😀] `[^note] [old][]`\n\n[old]: https://example.com/manual\n[^注释😀]: Footnote with [link][old].\n"),
+        ("[^note]:", "注释😀", "# [old][]\n\n[old][] [shown][old] ![alt][old] [^注释😀] `[^note] [old][]`\n\n[old]: https://example.com/manual\n[^注释😀]: Footnote with [link][old].\n"),
+    ] {
+        let at = source.find(needle).unwrap() + if needle.starts_with("[^") { 2 } else { 1 };
+        let prepared = prepare_rename(&mut server, &uri, source, at);
+        assert_eq!(range_text(source, &prepared["range"]), if needle.starts_with("[^") { "note" } else { "old" });
+        let response = rename_request(&mut server, &uri, source, at, name);
+        assert!(response.get("error").is_none(), "{response}");
+        assert_eq!(response["result"]["documentChanges"][0]["textDocument"]["version"], 1);
+        let applied = apply_workspace_edit(&response["result"], &[(&uri, source)]);
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[&uri], expected);
+        // Apply to the real server and verify that all edited uses resolve.
+        server.notify("textDocument/didChange", json!({"textDocument":{"uri":uri,"version":2},"contentChanges":[{"text":expected}]}));
+        // Drain the opening batch first, then the changed version.
+        loop {
+            let diagnostics = server.diagnostics_for(&uri);
+            if diagnostics["version"] == 2 {
+                assert_eq!(diagnostics["diagnostics"], json!([]));
+                break;
+            }
+        }
+        open_uri(&mut server, &uri, source);
+    }
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("other.dj")).unwrap(),
+        source
+    );
+    server.shutdown();
+}
+
+#[test]
+fn stdio_local_rename_duplicate_precedence_and_separate_namespaces() {
+    let mut server = Server::new(true);
+    for (source, needle, expected) in [
+        (
+            "[x][old]\n\n[old]: first\n[old]: last\n",
+            "[old]: last",
+            "[x][new]\n\n[old]: first\n[new]: last\n",
+        ),
+        (
+            "[x][old]\n\n[old]: first\n[old]: last\n",
+            "[old]: first",
+            "[x][old]\n\n[new]: first\n[old]: last\n",
+        ),
+        (
+            "[^old]\n\n[^old]: first\n[^old]: last\n",
+            "[^old]: last",
+            "[^new]\n\n[^old]: first\n[^new]: last\n",
+        ),
+        (
+            "[^old]\n\n[^old]: first\n[^old]: last\n",
+            "[^old]: first",
+            "[^old]\n\n[^new]: first\n[^old]: last\n",
+        ),
+        (
+            "[x][old] [^new]\n\n[old]: https://example.com\n[^new]: note\n",
+            "[old]:",
+            "[x][new] [^new]\n\n[new]: https://example.com\n[^new]: note\n",
+        ),
+        (
+            "# old\n\n[old][]\n\n[old]: url\n",
+            "[old]:",
+            "# old\n\n[old][new]\n\n[new]: url\n",
+        ),
+    ] {
+        server.open(source);
+        let at = source.find(needle).unwrap() + if needle.starts_with("[^") { 2 } else { 1 };
+        let response = rename_request(&mut server, "file:///test.dj", source, at, "new");
+        assert!(response.get("error").is_none(), "{source}: {response}");
+        let applied = apply_workspace_edit(&response["result"], &[("file:///test.dj", source)]);
+        assert_eq!(applied["file:///test.dj"], expected);
+    }
+    server.shutdown();
+}
+
+#[test]
+fn stdio_local_rename_normalizes_whitespace_and_escapes_link_labels() {
+    let mut server = Server::new(true);
+    let source = "[old][] [shown][old]\n\n[old]: https://example.com\n";
+    server.open(source);
+    let response = rename_request(&mut server, "file:///test.dj", source, 1, "新  名😀*tag*");
+    assert!(response.get("error").is_none(), "{response}");
+    let applied = apply_workspace_edit(&response["result"], &[("file:///test.dj", source)]);
+    assert_eq!(applied["file:///test.dj"], "[old][新 名😀\\*tag\\*] [shown][新 名😀\\*tag\\*]\n\n[新 名😀*tag*]: https://example.com\n");
+    server.open(&applied["file:///test.dj"]);
+    let updated = &applied["file:///test.dj"];
+    assert_eq!(
+        server
+            .refs(updated, updated.rfind("[新").unwrap() + 1, false)
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    server.shutdown();
+}
+
+#[test]
+fn stdio_local_rename_rejects_capture_conflicts_and_syntax_changes() {
+    let mut server = Server::new(true);
+    for (source, at, name) in [
+        ("[old][] [new][]\n\n[old]: first\n[new]: second\n", 1, "new"),
+        ("[^old] [^new]\n\n[^old]: first\n[^new]: second\n", 2, "new"),
+        ("# New\n\n[old][]\n\n[old]: url\n", 9, "New"),
+        ("[x][old] [missing][new]\n\n[old]: url\n", 4, "new"),
+        ("[^old] [^new]\n\n[^old]: note\n", 2, "new"),
+        ("[old][]\n\n[old]: url\n", 1, "bad]label"),
+        ("[old][]\n\n[old]: url\n", 1, "^note"),
+        ("[^old]\n\n[^old]: note\n", 2, "bad]note"),
+        ("[^old]\n\n[^old]: note\n", 2, ""),
+        ("[^old]\n\n[^old]: note\n", 2, "new\nnote"),
+    ] {
+        server.open(source);
+        let response = rename_request(&mut server, "file:///test.dj", source, at, name);
+        assert_eq!(
+            response["error"]["code"], -32602,
+            "{source:?} -> {name:?}: {response}"
+        );
+    }
+    server.open("[missing][absent] [^absent]\n");
+    for at in [11, 20] {
+        assert!(prepare_rename(
+            &mut server,
+            "file:///test.dj",
+            "[missing][absent] [^absent]\n",
+            at
+        )
+        .is_null());
+    }
+    server.shutdown();
+}
+
+#[test]
+fn stdio_workspace_reference_labels_and_footnotes_remain_document_local() {
+    let repo = Repository::new();
+    let source = "[text][label] [^note]\n\n[label]: https://example.com\n[^note]: note\n";
+    repo.write("a.dj", source);
+    repo.write("b.dj", source);
+    let uri = repo.uri("a.dj");
+    let mut server = Server::start(true, true, None, Some(json!([repo.folder("")])));
+    open_uri(&mut server, &uri, source);
+    open_uri(&mut server, &repo.uri("b.dj"), source);
+    for (needle, expected) in [("label", "label"), ("note]", "note")] {
+        let at = source.find(needle).unwrap();
+        let refs = references_uri(&mut server, &uri, source, at, true);
+        assert_eq!(refs.as_array().unwrap().len(), 2);
+        assert!(refs
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["uri"] == uri && range_text(source, &r["range"]) == expected));
+    }
+    server.shutdown();
+}
+
+#[test]
+fn stdio_workspace_references_prioritize_links_inside_headings_and_inline_ids() {
+    let repo = Repository::new();
+    let target = "An [inline]{#spot} anchor.\n";
+    let source = "# [Shown](target.dj#spot)\n\n[own](#Shown) [same target](target.dj#spot)\n";
+    repo.write("target.dj", target);
+    repo.write("source.dj", source);
+    let uri = repo.uri("source.dj");
+    let mut server = Server::start(true, true, None, Some(json!([repo.folder("")])));
+    open_uri(&mut server, &uri, source);
+    for needle in ["Shown]", "#spot", "same target"] {
+        let refs = references_uri(
+            &mut server,
+            &uri,
+            source,
+            source.find(needle).unwrap(),
+            true,
+        );
+        assert_eq!(refs.as_array().unwrap().len(), 3, "{refs}");
+        assert_eq!(
+            refs.as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["uri"] == uri)
+                .count(),
+            2
+        );
+        for r in refs.as_array().unwrap() {
+            assert_eq!(
+                range_text(if r["uri"] == uri { source } else { target }, &r["range"]),
+                "spot"
+            );
+        }
+    }
+    // A link to the heading itself must remain a separate target.
+    let own = references_uri(
+        &mut server,
+        &uri,
+        source,
+        source.find("#Shown").unwrap() + 1,
+        false,
+    );
+    assert_eq!(own.as_array().unwrap().len(), 1);
+    assert_eq!(range_text(source, &own[0]["range"]), "Shown");
+    server.shutdown();
+}
+
+#[test]
+fn stdio_non_file_reference_queries_and_local_renames_use_utf16_ranges() {
+    let uri = "untitled:%E4%B8%AD%E6%96%87";
+    let source = "# 标题😀\r\n\r\n[标题😀][] [本地](#标题😀) [^旧😀]\r\n\r\n[^旧😀]: 注释\r\n";
+    let mut server = Server::new(true);
+    open_uri(&mut server, uri, source);
+    let refs = references_uri(&mut server, uri, source, 2, true);
+    assert_eq!(refs.as_array().unwrap().len(), 3);
+    for r in refs.as_array().unwrap() {
+        assert_eq!(r["uri"], uri);
+        assert_eq!(range_text(source, &r["range"]), "标题😀");
+    }
+    let response = rename_request(
+        &mut server,
+        uri,
+        source,
+        source.find("旧😀").unwrap(),
+        "新😀",
+    );
+    assert!(response.get("error").is_none(), "{response}");
+    let applied = apply_workspace_edit(&response["result"], &[(uri, source)]);
+    assert_eq!(applied[uri], source.replace("旧😀", "新😀"));
     server.shutdown();
 }

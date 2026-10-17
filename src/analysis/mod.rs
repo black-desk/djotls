@@ -7,6 +7,7 @@
 
 pub mod links;
 pub mod moves;
+pub mod references;
 pub mod rename;
 pub mod text;
 use crate::parser::{parse_events, Event};
@@ -40,6 +41,17 @@ pub struct Reference {
     pub name_range: Range<usize>,
     pub full_range: Range<usize>,
     pub target: Option<usize>,
+}
+
+impl Reference {
+    /// Expand a collapsed link's empty label instead of changing visible text.
+    pub(crate) fn label_range(&self) -> Range<usize> {
+        if self.kind == SymbolKind::Link && self.name_range.end < self.full_range.end - 1 {
+            self.full_range.end - 1..self.full_range.end - 1
+        } else {
+            self.name_range.clone()
+        }
+    }
 }
 
 /// A source link with its decoded destination, before resolving a document URI.
