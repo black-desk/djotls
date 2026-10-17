@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Editor analysis directly over parser events; no dependency on an LSP runtime.
-//! Snapshots own source and events. Context is computed on demand rather than
-//! retaining a syntax tree. Ranges are half-open UTF-8 byte offsets.
+//! Snapshots retain source, analysis records and top-level parsing boundaries.
+//! Completion reparses a local block rather than retaining the event stream.
+//! Ranges are half-open UTF-8 byte offsets.
 
 pub mod links;
 pub mod moves;
@@ -86,7 +87,7 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionContext {
     pub kind: CompletionKind,
     pub replace: Range<usize>,
@@ -105,7 +106,7 @@ pub enum CompletionKind {
 
 pub struct Document {
     pub source: String,
-    pub events: Vec<Event>,
+    block_starts: Box<[usize]>,
     pub lines: LineIndex,
     pub definitions: Vec<Definition>,
     pub references: Vec<Reference>,
@@ -207,11 +208,12 @@ fn identifier(title: &str, used: &HashSet<String>) -> String {
 
 impl Document {
     pub fn new(source: String) -> Self {
-        let events = parse_events(&source).collect();
+        let events: Vec<_> = parse_events(&source).collect();
+        let block_starts = block_starts(&source, &events);
         let lines = LineIndex::new(&source);
         let mut doc = Self {
             source,
-            events,
+            block_starts,
             lines,
             definitions: vec![],
             references: vec![],
@@ -220,48 +222,17 @@ impl Document {
             diagnostics: vec![],
             reverse: HashMap::new(),
         };
-        doc.analyze();
+        doc.analyze(&events);
         doc
     }
 
-    fn event_range(&self, i: usize) -> Range<usize> {
-        let e = &self.events[i];
-        source_range(&self.source, e.startpos, e.endpos)
-    }
-
-    fn span_range(&self, span: &Span) -> Range<usize> {
-        let start = self.event_range(span.open).start;
-        // Most block close events are boundary markers, not source characters.
-        let end = if matches!(
-            span.tag.as_str(),
-            "para"
-                | "heading"
-                | "footnote"
-                | "reference_definition"
-                | "list"
-                | "list_item"
-                | "block_quote"
-                | "table"
-        ) {
-            self.events[span.close].startpos.min(self.source.len())
-        } else {
-            self.event_range(span.close).end
-        };
-        start..end.max(start)
-    }
-
-    fn analyze(&mut self) {
-        let spans = spans(&self.events);
+    fn analyze(&mut self, events: &[Event]) {
+        let spans = spans(events);
         let mut explicit_ids: HashMap<usize, String> = HashMap::new();
         // Resolve attribute ownership before deriving heading IDs. Ordinary
         // block attributes attach only across adjacent attribute groups.
-        for (i, _) in self
-            .events
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.annot == "id")
-        {
-            let name_range = self.event_range(i);
+        for (i, _) in events.iter().enumerate().filter(|(_, e)| e.annot == "id") {
+            let name_range = event_range(&self.source, events, i);
             let key = self.source[name_range.clone()].to_string();
             let attr = spans.iter().find(|s| {
                 s.open < i
@@ -270,7 +241,7 @@ impl Document {
             });
             let owner = attr.and_then(|attr| {
                 if attr.tag == "block_attributes" {
-                    self.events
+                    events
                         .iter()
                         .enumerate()
                         .skip(attr.close + 1)
@@ -307,9 +278,9 @@ impl Document {
             let bare_word = attr
                 .filter(|a| a.tag == "attributes")
                 .and_then(|a| a.open.checked_sub(1))
-                .filter(|&i| self.events[i].annot == "str")
+                .filter(|&i| events[i].annot == "str")
                 .and_then(|i| {
-                    let range = self.event_range(i);
+                    let range = event_range(&self.source, events, i);
                     let text = &self.source[range.clone()];
                     if text.chars().last().is_some_and(char::is_whitespace) {
                         return None;
@@ -324,7 +295,7 @@ impl Document {
             }
             let full_range = owner
                 .and_then(|o| spans.iter().find(|s| s.open == o))
-                .map(|s| self.span_range(s))
+                .map(|s| span_range(&self.source, events, s))
                 .or(bare_word)
                 .unwrap_or_else(|| name_range.clone());
             self.definitions.push(Definition {
@@ -345,7 +316,7 @@ impl Document {
         let mut used = HashSet::new();
         let mut processed_id = 0;
         for span in ordered {
-            for e in &self.events[processed_id..=span.close] {
+            for e in &events[processed_id..=span.close] {
                 if e.annot == "id" {
                     used.insert(
                         self.source[source_range(&self.source, e.startpos, e.endpos)].to_string(),
@@ -353,8 +324,8 @@ impl Document {
                 }
             }
             processed_id = span.close + 1;
-            let range = self.span_range(span);
-            let inner = &self.events[span.open + 1..span.close];
+            let range = span_range(&self.source, events, span);
+            let inner = &events[span.open + 1..span.close];
             match span.tag.as_str() {
                 "reference_definition" => {
                     if let Some(key_event) = inner.iter().find(|e| e.annot == "reference_key") {
@@ -439,7 +410,7 @@ impl Document {
                         full_range: range.clone(),
                         destination: format!("#{id}"),
                     });
-                    let open = &self.events[span.open];
+                    let open = &events[span.open];
                     self.headings.push(Heading {
                         id,
                         level: open.endpos + 1 - open.startpos,
@@ -456,28 +427,28 @@ impl Document {
                     let Some(link) = link else {
                         continue;
                     };
-                    let full_range = self.event_range(link.open).start..range.end;
+                    let full_range = event_range(&self.source, events, link.open).start..range.end;
                     if !is_reference {
                         let destination = text.replace(['\r', '\n'], "");
                         self.links.push(Link {
                             range: full_range.clone(),
-                            destination_range: self.event_range(span.open).end
-                                ..self.event_range(span.close).start,
+                            destination_range: event_range(&self.source, events, span.open).end
+                                ..event_range(&self.source, events, span.close).start,
                             destination: destination.clone(),
                         });
                         if !destination.starts_with('#') || destination == "#" {
                             continue;
                         }
                     }
-                    let name_start = self.event_range(span.open).end;
-                    let name_end = self.event_range(span.close).start;
+                    let name_start = event_range(&self.source, events, span.open).end;
+                    let name_end = event_range(&self.source, events, span.close).start;
                     let mut name_range = name_start.min(name_end)..name_end;
                     let key = if is_reference && text.is_empty() {
-                        name_range =
-                            self.event_range(link.open).end..self.event_range(link.close).start;
+                        name_range = event_range(&self.source, events, link.open).end
+                            ..event_range(&self.source, events, link.close).start;
                         normalize_label(&plain_text(
                             &self.source,
-                            &self.events[link.open + 1..link.close],
+                            &events[link.open + 1..link.close],
                         ))
                     } else if is_reference {
                         normalize_label(&text)
@@ -503,11 +474,7 @@ impl Document {
                 _ => {}
             }
         }
-        for e in self
-            .events
-            .iter()
-            .filter(|e| e.annot == "footnote_reference")
-        {
+        for e in events.iter().filter(|e| e.annot == "footnote_reference") {
             let full_range = source_range(&self.source, e.startpos, e.endpos);
             let name_range = (full_range.start + 2).min(full_range.end)
                 ..full_range.end.saturating_sub(1).max(full_range.start + 2);
@@ -615,129 +582,210 @@ impl Document {
             .map(|&i| &self.references[i])
     }
 
-    /// Query only when requested. Pairing uses event order, not binary search:
-    /// block close markers are not necessarily sorted by source offset.
+    /// Reparse only the top-level block containing the cursor. Positions are
+    /// translated into the original source so document EOF remains distinct
+    /// from an artificial end of the local parsing range.
     pub fn completion_context(&self, offset: usize) -> Option<CompletionContext> {
         if offset > self.source.len() || !self.source.is_char_boundary(offset) {
             return None;
         }
-        let spans = spans(&self.events);
-        if spans.iter().any(|s| {
-            matches!(
-                s.tag.as_str(),
-                "code_block"
-                    | "verbatim"
-                    | "inline_math"
-                    | "display_math"
-                    | "url"
-                    | "email"
-                    | "attributes"
-                    | "block_attributes"
-            ) && {
-                let range = self.span_range(s);
-                range.start < offset
-                    && (offset < range.end
-                        || (offset == range.end
-                            && (s.tag == "code_block"
-                                && self.events[s.close].startpos >= self.source.len())))
-            }
-        }) {
-            return None;
-        }
-        let start = spans
-            .iter()
-            .filter(|s| {
-                matches!(s.tag.as_str(), "para" | "heading" | "caption" | "cell") && {
-                    let range = self.span_range(s);
-                    range.start <= offset && offset <= range.end
-                }
+        let index = self
+            .block_starts
+            .partition_point(|&start| start < offset)
+            .saturating_sub(1);
+        let start = self.block_starts[index];
+        let end = self
+            .block_starts
+            .get(index + 1)
+            .copied()
+            .unwrap_or(self.source.len());
+        let events: Vec<_> = parse_events(&self.source[start..end])
+            .map(|mut event| {
+                event.startpos += start;
+                event.endpos += start;
+                event
             })
-            .map(|s| self.event_range(s.open).start)
-            .max()
-            .unwrap_or_else(|| self.source[..offset].rfind('\n').map_or(0, |i| i + 1));
-        let before = &self.source[start..offset];
-        let bracket = before.rfind('[')?;
-        let absolute = start + bracket;
-        if spans.iter().any(|s| {
-            matches!(
-                s.tag.as_str(),
-                "code_block"
-                    | "verbatim"
-                    | "inline_math"
-                    | "display_math"
-                    | "url"
-                    | "email"
-                    | "attributes"
-                    | "block_attributes"
-            ) && self.span_range(s).contains(&absolute)
-        }) {
-            return None;
-        }
-        if escaped(&self.source, absolute) {
-            return None;
-        }
-        let tail = &before[bracket + 1..];
-        let after = &self.source[offset..];
-        let anchor = before.rfind("](#").filter(|&i| i >= bracket);
-        let (kind, prefix, name_start, close) = if let Some(anchor) = anchor {
-            (
-                CompletionKind::Anchor,
-                &before[anchor + 3..],
-                start + anchor + 3,
-                ')',
-            )
-        } else if let Some(destination) = before.rfind("](").filter(|&i| i >= bracket) {
-            (
-                CompletionKind::Destination,
-                &before[destination + 2..],
-                start + destination + 2,
-                ')',
-            )
-        } else if let Some(prefix) = tail.strip_prefix('^') {
-            (CompletionKind::Footnote, prefix, absolute + 2, ']')
-        } else if bracket > 0 && before.as_bytes()[bracket - 1] == b']' {
-            (CompletionKind::Link, tail, absolute + 1, ']')
-        } else if tail.is_empty() {
-            (CompletionKind::Template, tail, absolute, ']')
-        } else {
-            return None;
-        };
-        if prefix.contains(['[', ']', '(', ')', '\r', '\n']) {
-            return None;
-        }
-        let existing_end = after.find([close, '\n', '\r']);
-        // Replace the remainder only when a closing delimiter is present on
-        // this line; otherwise do not swallow unrelated text after the cursor.
-        let replace_end = existing_end
-            .filter(|&i| after.as_bytes()[i] == close as u8)
-            .map(|i| offset + i + 1)
-            .unwrap_or(offset);
-        let replace_end = if matches!(kind, CompletionKind::Template | CompletionKind::Link)
-            && after.starts_with("]()")
-        {
-            offset + 3
-        } else if kind == CompletionKind::Link && after.starts_with(')') {
-            offset + 1
-        } else if kind == CompletionKind::Template {
-            if after.starts_with(']') {
-                offset + 1
-            } else {
-                offset
-            }
-        } else {
-            replace_end
-        };
-        Some(CompletionContext {
-            kind,
-            replace: name_start..replace_end,
-            prefix: prefix.to_string(),
-            suffix: if matches!(kind, CompletionKind::Anchor | CompletionKind::Destination) {
-                ")"
-            } else {
-                "]"
-            },
-        })
+            .collect();
+        completion_context_in(&self.source, &events, offset)
     }
+}
+
+fn event_range(source: &str, events: &[Event], i: usize) -> Range<usize> {
+    let e = &events[i];
+    source_range(source, e.startpos, e.endpos)
+}
+
+fn span_range(source: &str, events: &[Event], span: &Span) -> Range<usize> {
+    let start = event_range(source, events, span.open).start;
+    // Most block close events are boundary markers, not source characters.
+    let end = if matches!(
+        span.tag.as_str(),
+        "para"
+            | "heading"
+            | "footnote"
+            | "reference_definition"
+            | "list"
+            | "list_item"
+            | "block_quote"
+            | "table"
+    ) {
+        events[span.close].startpos.min(source.len())
+    } else {
+        event_range(source, events, span.close).end
+    };
+    start..end.max(start)
+}
+
+fn completion_context_in(
+    source: &str,
+    events: &[Event],
+    offset: usize,
+) -> Option<CompletionContext> {
+    if offset > source.len() || !source.is_char_boundary(offset) {
+        return None;
+    }
+    let spans = spans(events);
+    if spans.iter().any(|s| {
+        matches!(
+            s.tag.as_str(),
+            "code_block"
+                | "verbatim"
+                | "inline_math"
+                | "display_math"
+                | "url"
+                | "email"
+                | "attributes"
+                | "block_attributes"
+        ) && {
+            let range = span_range(source, events, s);
+            range.start < offset
+                && (offset < range.end
+                    || (offset == range.end
+                        && (s.tag == "code_block" && events[s.close].startpos >= source.len())))
+        }
+    }) {
+        return None;
+    }
+    let start = spans
+        .iter()
+        .filter(|s| {
+            matches!(s.tag.as_str(), "para" | "heading" | "caption" | "cell") && {
+                let range = span_range(source, events, s);
+                range.start <= offset && offset <= range.end
+            }
+        })
+        .map(|s| event_range(source, events, s.open).start)
+        .max()
+        .unwrap_or_else(|| source[..offset].rfind('\n').map_or(0, |i| i + 1));
+    let before = &source[start..offset];
+    let bracket = before.rfind('[')?;
+    let absolute = start + bracket;
+    if spans.iter().any(|s| {
+        matches!(
+            s.tag.as_str(),
+            "code_block"
+                | "verbatim"
+                | "inline_math"
+                | "display_math"
+                | "url"
+                | "email"
+                | "attributes"
+                | "block_attributes"
+        ) && span_range(source, events, s).contains(&absolute)
+    }) {
+        return None;
+    }
+    if escaped(source, absolute) {
+        return None;
+    }
+    let tail = &before[bracket + 1..];
+    let after = &source[offset..];
+    let anchor = before.rfind("](#").filter(|&i| i >= bracket);
+    let (kind, prefix, name_start, close) = if let Some(anchor) = anchor {
+        (
+            CompletionKind::Anchor,
+            &before[anchor + 3..],
+            start + anchor + 3,
+            ')',
+        )
+    } else if let Some(destination) = before.rfind("](").filter(|&i| i >= bracket) {
+        (
+            CompletionKind::Destination,
+            &before[destination + 2..],
+            start + destination + 2,
+            ')',
+        )
+    } else if let Some(prefix) = tail.strip_prefix('^') {
+        (CompletionKind::Footnote, prefix, absolute + 2, ']')
+    } else if bracket > 0 && before.as_bytes()[bracket - 1] == b']' {
+        (CompletionKind::Link, tail, absolute + 1, ']')
+    } else if tail.is_empty() {
+        (CompletionKind::Template, tail, absolute, ']')
+    } else {
+        return None;
+    };
+    if prefix.contains(['[', ']', '(', ')', '\r', '\n']) {
+        return None;
+    }
+    let existing_end = after.find([close, '\n', '\r']);
+    // Replace the remainder only when a closing delimiter is present on
+    // this line; otherwise do not swallow unrelated text after the cursor.
+    let replace_end = existing_end
+        .filter(|&i| after.as_bytes()[i] == close as u8)
+        .map(|i| offset + i + 1)
+        .unwrap_or(offset);
+    let replace_end = if matches!(kind, CompletionKind::Template | CompletionKind::Link)
+        && after.starts_with("]()")
+    {
+        offset + 3
+    } else if kind == CompletionKind::Link && after.starts_with(')') {
+        offset + 1
+    } else if kind == CompletionKind::Template {
+        if after.starts_with(']') {
+            offset + 1
+        } else {
+            offset
+        }
+    } else {
+        replace_end
+    };
+    Some(CompletionContext {
+        kind,
+        replace: name_start..replace_end,
+        prefix: prefix.to_string(),
+        suffix: if matches!(kind, CompletionKind::Anchor | CompletionKind::Destination) {
+            ")"
+        } else {
+            "]"
+        },
+    })
+}
+
+/// Partition source at top-level block starts, retaining intervening whitespace.
+/// Block attributes belong to the following block and share its parsing range.
+fn block_starts(source: &str, events: &[Event]) -> Box<[usize]> {
+    let mut starts = vec![0];
+    let mut depth = 0usize;
+    let mut attributes_pending = false;
+    for event in events {
+        let tag = base(&event.annot);
+        let opens = tag.starts_with('+');
+        if depth == 0 && (opens || tag == "thematic_break") {
+            let start = source[..event.startpos.min(source.len())]
+                .rfind('\n')
+                .map_or(0, |i| i + 1);
+            if !attributes_pending && start > *starts.last().unwrap() && start < source.len() {
+                starts.push(start);
+            }
+            attributes_pending = tag == "+block_attributes";
+        }
+        if opens {
+            depth += 1;
+        } else if tag.starts_with('-') {
+            depth = depth.saturating_sub(1);
+        }
+    }
+    starts.into_boxed_slice()
 }
 
 fn escaped(source: &str, offset: usize) -> bool {
@@ -748,4 +796,122 @@ fn escaped(source: &str, offset: usize) -> bool {
         .count()
         % 2
         == 1
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+
+    fn compare(source: String, name: &str) {
+        let events: Vec<_> = parse_events(&source).collect();
+        let doc = Document::new(source);
+        for offset in 0..=doc.source.len() + 1 {
+            assert_eq!(
+                doc.completion_context(offset),
+                completion_context_in(&doc.source, &events, offset),
+                "local/full completion mismatch in {name} at byte {offset}: {:?}",
+                doc.source
+            );
+        }
+    }
+
+    #[test]
+    fn top_level_parsing_boundaries() {
+        let source = "first\n\n{#id}\n{.class}\n- item\n\n  > nested\n\nnext\n";
+        let doc = Document::new(source.to_owned());
+        assert_eq!(
+            &*doc.block_starts,
+            &[
+                0,
+                source.find("{#id}").unwrap(),
+                source.find("next").unwrap()
+            ]
+        );
+    }
+
+    #[test]
+    fn local_completion_context_boundaries() {
+        for template in [
+            "before\n\nHERE\n\nafter",
+            "before\n\n{#id}\n{.class}\nHERE\n\nafter",
+            "before\n\n```\nHERE\n```\n\nafter",
+            "before\n\n`HERE` outside\n\nafter",
+            "before\n\n$`HERE` outside\n\nafter",
+            "before\n\n{key=\"HERE\"}\nparagraph\n\nafter",
+            "before\n\n- first\n\n  > HERE\n\nafter",
+            "before\n\n[^note]: HERE\n\nafter",
+            "before\n\n::: note\nHERE\n:::\n\nafter",
+            "before\n\n| HERE | other |\n\nafter",
+            "before\n\n```\ncode\n```\nHERE",
+        ] {
+            for prefix in ["[", "[^fo", "[text][lab", "[text](#an", "[text](dest"] {
+                let source = template.replace("HERE", prefix);
+                compare(source.clone(), "completion context boundaries");
+                compare(
+                    source.replace('\n', "\r\n"),
+                    "CRLF completion context boundaries",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn local_completion_matches_full_parse() {
+        for entry in glob::glob("third_party/djot.js/test/*.test").unwrap() {
+            let path = entry.unwrap();
+            let content = std::fs::read_to_string(&path).unwrap();
+            let mut lines = content.lines();
+            let mut case = 0;
+            while let Some(line) = lines.next() {
+                if !line.starts_with("```") {
+                    continue;
+                }
+                let mut source = String::new();
+                for line in lines.by_ref() {
+                    if line == "." || line == "!" {
+                        break;
+                    }
+                    source.push_str(line);
+                    source.push('\n');
+                }
+                for line in lines.by_ref() {
+                    if line.starts_with("```") {
+                        break;
+                    }
+                }
+                case += 1;
+                compare(source, &format!("{}:{case}", path.display()));
+            }
+        }
+        for entry in glob::glob("tests/*.in").unwrap() {
+            let path = entry.unwrap();
+            compare(
+                std::fs::read_to_string(&path).unwrap(),
+                &path.display().to_string(),
+            );
+        }
+        for source in [
+            "[",
+            "[^fo",
+            "[text][lab",
+            "[text](#an",
+            "```\n[^foo",
+            "> [^fo",
+            "- one\n\n  [^fo",
+            "::: note\n[^fo",
+            "{key=\"unfinished",
+            "text `[^fo",
+            "# heading\n[^fo",
+            "| [^fo | other |\n",
+            "{#id}\n{.class}\n[^fo\n\nnext",
+            "```\ncode\n```\n[^fo",
+            "  - item\n\n  - [^fo\n\nnext",
+            "[中文][标\n\n[^脚",
+            "\r\n{#id}\r\n[^fo\r\n\r\nnext",
+            "\n\n",
+            "",
+        ] {
+            compare(source.to_owned(), "incomplete/boundary");
+        }
+    }
 }
