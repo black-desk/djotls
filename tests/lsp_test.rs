@@ -3101,6 +3101,157 @@ fn stdio_workspace_reference_labels_and_footnotes_remain_document_local() {
     server.shutdown();
 }
 
+// Opt in: this measures the actual server process, not the test harness. RSS
+// includes allocator retention, thread stacks and shared pages, not just live
+// Rust allocations. No platform-dependent memory threshold is a test assertion.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "opt-in Linux process memory probe; run in release mode with --nocapture"]
+fn stdio_memory_probe() {
+    fn memory(server: &Server) -> (u64, u64) {
+        let status =
+            std::fs::read_to_string(format!("/proc/{}/status", server.child.id())).unwrap();
+        let kib = |field: &str| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix(field))
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+        };
+        (kib("VmRSS:"), kib("VmHWM:"))
+    }
+    let counts: Vec<usize> = match std::env::var("DJOTLS_MEMORY_DOCUMENTS") {
+        Ok(count) => vec![count.parse().expect("positive document count")],
+        Err(_) => vec![100, 500, 1000],
+    };
+    println!("documents,source_KiB,stage,rss_KiB,peak_rss_KiB");
+    for count in counts {
+        assert!(count > 0);
+        let repo = Repository::new();
+        let mut server = Server::start(true, true, None, Some(json!([repo.folder("")])));
+        let mut bytes = 0usize;
+        let report = |stage: &str, server: &Server, bytes: usize| {
+            let (rss, peak) = memory(server);
+            println!("{count},{:.1},{stage},{rss},{peak}", bytes as f64 / 1024.0);
+        };
+        report("empty", &server, bytes);
+        let prose = "A document paragraph with *emphasis*, _strong text_, `code`, Unicode 中文😀 and an [external link](https://example.com/manual). This is ordinary prose for a documentation workspace. ".repeat(4);
+        let mut fixture =
+            String::from("# Document\n\n[shared](target.dj#Shared) [label][] [^note]\n\n");
+        for section in 0..16 {
+            fixture.push_str(&format!("## Section {section}\n\n{prose}\n\n"));
+        }
+        fixture.push_str("[label]: https://example.com/guide\n[^note]: A footnote.\n");
+        repo.write("target.dj", "# Shared\n");
+        bytes += "# Shared\n".len();
+        for i in 0..count {
+            repo.write(&format!("doc-{i}.dj"), &fixture);
+            bytes += fixture.len();
+        }
+        assert_eq!(workspace_symbols(&mut server, "Shared").len(), 1);
+        report("indexed", &server, bytes);
+        let target_uri = repo.uri("target.dj");
+        open_uri(&mut server, &target_uri, "# Shared\n");
+        let query = |server: &mut Server| {
+            let refs = references_uri(server, &target_uri, "# Shared\n", 2, false);
+            assert_eq!(refs.as_array().unwrap().len(), count);
+        };
+        // No documents have unsaved changes: isolate transient query memory.
+        query(&mut server);
+        report("first_query_no_edits", &server, bytes);
+        for _ in 0..8 {
+            query(&mut server);
+        }
+        report("queries_only_8_rounds", &server, bytes);
+        let open_count = count.min(4);
+        for i in 0..open_count {
+            open_uri(&mut server, &repo.uri(&format!("doc-{i}.dj")), &fixture);
+        }
+        // Warm request and allocator paths before measuring repeated work.
+        query(&mut server);
+        let first_uri = repo.uri("doc-0.dj");
+        let label_at = fixture.find("[label]:").unwrap() + 1;
+        let rename = rename_request(&mut server, &first_uri, &fixture, label_at, "renamed label");
+        assert!(rename.get("error").is_none(), "{rename}");
+        drop(rename);
+        report("open_and_warm", &server, bytes);
+        for version in 2..=9 {
+            let changed = format!("{fixture}\nRevision {version}.\n");
+            for i in 0..open_count {
+                let uri = repo.uri(&format!("doc-{i}.dj"));
+                server.notify("textDocument/didChange", json!({"textDocument":{"uri":uri,"version":version},"contentChanges":[{"text":changed}]}));
+            }
+            query(&mut server);
+            let rename =
+                rename_request(&mut server, &first_uri, &changed, label_at, "renamed label");
+            assert!(rename.get("error").is_none(), "{rename}");
+            for i in 0..open_count {
+                let uri = repo.uri(&format!("doc-{i}.dj"));
+                loop {
+                    let diagnostics = server.diagnostics_for(&uri);
+                    if diagnostics["version"] == version {
+                        assert_eq!(diagnostics["diagnostics"], json!([]));
+                        break;
+                    }
+                }
+            }
+            if version == 5 || version == 9 {
+                report(
+                    if version == 5 {
+                        "after_4_rounds"
+                    } else {
+                        "after_8_rounds"
+                    },
+                    &server,
+                    bytes,
+                );
+            }
+        }
+        // Save exactly what the client last sent, then notify the server.
+        // didSave alone does not write a file; the client owns that operation.
+        let saved = format!("{fixture}\nRevision 9.\n");
+        for i in 0..open_count {
+            let name = format!("doc-{i}.dj");
+            repo.write(&name, &saved);
+            assert_eq!(std::fs::read_to_string(repo.0.join(&name)).unwrap(), saved);
+            server.notify(
+                "textDocument/didSave",
+                json!({"textDocument":{"uri":repo.uri(&name)}}),
+            );
+        }
+        query(&mut server);
+        for i in 0..open_count {
+            let uri = repo.uri(&format!("doc-{i}.dj"));
+            assert_eq!(server.diagnostics_for(&uri)["diagnostics"], json!([]));
+        }
+        report("saved_buffers_open", &server, bytes);
+        for i in 0..open_count {
+            server.notify(
+                "textDocument/didClose",
+                json!({"textDocument":{"uri":repo.uri(&format!("doc-{i}.dj"))}}),
+            );
+        }
+        server.notify(
+            "textDocument/didClose",
+            json!({"textDocument":{"uri":target_uri}}),
+        );
+        assert_eq!(workspace_symbols(&mut server, "Shared").len(), 1);
+        report("saved_all_buffers_closed", &server, bytes);
+        // Remove the corpus and refresh to distinguish retained index data
+        // from allocator memory that may remain resident after it is freed.
+        for i in 0..count {
+            std::fs::remove_file(repo.0.join(format!("doc-{i}.dj"))).unwrap();
+        }
+        assert_eq!(workspace_symbols(&mut server, "").len(), 1);
+        report("corpus_removed", &server, bytes);
+        server.shutdown();
+    }
+}
+
 #[test]
 fn stdio_workspace_references_prioritize_links_inside_headings_and_inline_ids() {
     let repo = Repository::new();
