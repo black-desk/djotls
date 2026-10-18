@@ -59,6 +59,11 @@ CLI help is plain text embedded by Clap. Keep `docs/long_about.txt` and
 `docs/after_help.txt` in `.txt` format; these files do not use Djot
 markup.
 
+Multiline block comments use block-attribute syntax: indent every
+continuation line, including a closing `% }` on its own line, relative
+to the opening line. In a list or quote, keep this extra indentation
+after the container prefix.
+
 Keep user-facing behavior and limitations in the guides. Put design
 reasons
 beside the code that needs them; link longer investigations from those

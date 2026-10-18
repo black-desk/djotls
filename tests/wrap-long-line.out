@@ -18,3 +18,7 @@ very very very very very very very very very very long line{ .with
 > > > }.
 
 - 一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的中文行。
+
+{ % A very very very very very very very very very very very very very
+ very very very very very very very very very very very very very very
+ long comment % }
