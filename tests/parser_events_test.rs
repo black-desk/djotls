@@ -399,7 +399,10 @@ fn main() {
     let test_dir = std::path::Path::new("third_party/djot.js/test");
     let mut trials = Vec::new();
 
-    for (name, input) in [("attribute-values", include_str!("attribute-values.in"))] {
+    for (name, input) in [
+        ("attribute-values", include_str!("attribute-values.in")),
+        ("div-boundaries", include_str!("div-boundaries.in")),
+    ] {
         for width in [24, 72] {
             trials.push(Trial::test(
                 format!("formatter-semantics::{name}::{width}"),

@@ -1,0 +1,44 @@
+::::
+
+Hi
+
+::::
+
+:::
+
+:::
+
+{ #bar .foo }
+::::
+
+Hi
+
+::: baz
+
+> A block quote.
+
+:::
+
+::::
+
+> :::
+>
+> Quoted body.
+>
+> :::
+
+- :::
+
+  Item body.
+
+  :::
+
+::: outer
+
+::: inner
+
+Same length closes both.
+
+:::
+
+After.

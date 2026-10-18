@@ -180,6 +180,11 @@ struct FmtWriter<'a> {
     /// True between +div and the class event — class name should go to raw output.
     div_needs_class: bool,
 
+    /// Keep each opening fence length: shortening nested fences can close
+    /// an outer div instead of the inner one.
+    div_fences: Vec<String>,
+    last_div_close: Option<usize>,
+
     /// True while inside +destination … -destination (link URL).
     in_destination: bool,
 
@@ -212,6 +217,8 @@ impl<'a> FmtWriter<'a> {
             have_content: false,
             pending_link_close: false,
             div_needs_class: false,
+            div_fences: Vec::new(),
+            last_div_close: None,
             in_destination: false,
             ref_def_url: String::new(),
         }
@@ -578,6 +585,18 @@ impl<'a> FmtWriter<'a> {
             let annot = &event.annot;
             log::debug!("Event: {} {:?}", annot, self.src(event));
 
+            if annot != "-div" {
+                self.last_div_close = None;
+            }
+
+            // A class event is optional. Finish a classless opening fence
+            // before processing its first child or the closing fence.
+            if self.div_needs_class && annot != "class" {
+                self.wrap(out)?;
+                self.need_blankline = true;
+                self.div_needs_class = false;
+            }
+
             if annot.starts_with('+') || annot.starts_with('-') {
                 let is_open = annot.starts_with('+');
                 let tag = &annot[1..];
@@ -833,14 +852,28 @@ impl<'a> FmtWriter<'a> {
                         if is_open {
                             self.blankline(out)?;
                             self.apply_prefix();
-                            self.push_raw("::: ")?;
+                            let fence: String =
+                                self.src(event).chars().take_while(|c| *c == ':').collect();
+                            self.push_raw(&fence)?;
+                            self.push_raw(" ")?;
+                            self.div_fences.push(fence);
+                            self.last_div_close = None;
                             self.div_needs_class = true;
                             // class event follows; wrap happens after class
                         } else {
-                            // Write closing :::
-                            self.apply_prefix();
-                            self.push_raw(":::")?;
-                            self.wrap(out)?;
+                            // Match the opening fence, including nested divs.
+                            let fence = self.div_fences.pop().unwrap();
+                            // One source fence can close multiple nested divs.
+                            // Repeating that fence would open an extra empty div.
+                            let already_closed =
+                                self.last_div_close.is_some_and(|len| len >= fence.len());
+                            if !already_closed {
+                                self.blankline(out)?;
+                                self.apply_prefix();
+                                self.push_raw(&fence)?;
+                                self.wrap(out)?;
+                                self.last_div_close = Some(fence.len());
+                            }
                             // The closing ::: is a block boundary, not content.
                             // Reset have_content so that a trailing blankline
                             // event does not produce an extra blank line.
@@ -850,6 +883,7 @@ impl<'a> FmtWriter<'a> {
                     }
                     "block_attributes" => {
                         if is_open {
+                            self.blankline(out)?;
                             self.in_block_attrs = true;
                             self.attr.reset();
                         } else {
@@ -871,6 +905,7 @@ impl<'a> FmtWriter<'a> {
                             // to the next element without a blank line.
                             self.attr.reset();
                             self.in_block_attrs = false;
+                            self.need_blankline = false;
                         }
                     }
                     "reference_definition" => {
