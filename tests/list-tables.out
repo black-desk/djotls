@@ -1,0 +1,39 @@
+- | a | b |
+  |---|---|
+  | x | y |
+
+  ^ A {_caption_} with words
+
+- Next item.
+
+  Following paragraph.
+
+4. | a | b |
+   |---|---|
+   | x | y |
+
+5. Next numbered item.
+
+- [ ] | a | b |
+      |---|---|
+      | x | y |
+
+- [x] Done.
+
+> - | a | b |
+>   |---|---|
+>   | x | y |
+>
+> - Next quoted item.
+
+- - | a | b |
+    |---|---|
+    | x | y |
+
+  - Next nested item.
+
+| standalone | table |
+|------------|-------|
+| x          | y     |
+
+After table.
