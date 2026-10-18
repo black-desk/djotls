@@ -1,0 +1,19 @@
+{ % @columns: 32 % }
+
+{ % A long comment that wraps before the following class attribute % .marked }
+Paragraph after the comment.
+
+> { % A long comment inside a block quote that needs to retain its indentation % }
+> Paragraph after the comment.
+
+- { % A long comment inside a list item that needs to retain its indentation % }
+  Paragraph after the comment.
+
+Paragraph outside the list.
+
+> > { % A nested comment with a literal > marker that must survive wrapping % }
+> > Paragraph after the comment.
+
+> { % Already wrapped comment
+>  with a literal >not-a-marker % }
+> Paragraph after the comment.

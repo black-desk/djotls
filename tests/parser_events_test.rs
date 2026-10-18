@@ -366,6 +366,69 @@ fn main() {
     let test_dir = std::path::Path::new("third_party/djot.js/test");
     let mut trials = Vec::new();
 
+    // Keep the block-attribute continuation contract explicit, as well as
+    // comparing every event with djot.js. Losing indentation turns comments
+    // and attributes into paragraph content rather than a block attribute.
+    for (name, input, block_attributes) in [
+        (
+            "comment-unindented",
+            "{ % comment\ncontinued % }\nBody.\n",
+            false,
+        ),
+        (
+            "comment-space",
+            "{ % comment\n continued % }\nBody.\n",
+            true,
+        ),
+        ("comment-tab", "{ % comment\n\tcontinued % }\nBody.\n", true),
+        ("attribute-unindented", "{ .marked\n}\nBody.\n", false),
+        ("attribute-space", "{ .marked\n }\nBody.\n", true),
+        ("attribute-tab", "{ .marked\n\t}\nBody.\n", true),
+        (
+            "comment-equal-indent",
+            "  { % comment\n  continued % }\nBody.\n",
+            false,
+        ),
+        (
+            "comment-deeper-indent",
+            "  { % comment\n   continued % }\nBody.\n",
+            true,
+        ),
+        (
+            "comment-closing-unindented",
+            "{ % comment\n continued\n% }\nBody.\n",
+            false,
+        ),
+        (
+            "comment-closing-indented",
+            "{ % comment\n continued\n % }\nBody.\n",
+            true,
+        ),
+        (
+            "quote-unindented",
+            "> { % comment\n> continued % }\n> Body.\n",
+            false,
+        ),
+        (
+            "quote-indented",
+            "> { % comment\n>  continued % }\n> Body.\n",
+            true,
+        ),
+    ] {
+        trials.push(Trial::test(
+            format!("attribute-continuation::{name}"),
+            move || {
+                assert_eq!(
+                    djotls::parser::parse_events(input)
+                        .any(|event| event.annot == "+block_attributes"),
+                    block_attributes,
+                    "{name}: block attribute or paragraph"
+                );
+                run_parser_event_test(name, 0, input)
+            },
+        ));
+    }
+
     let entries: Vec<_> = glob::glob(test_dir.join("*.test").to_str().unwrap())
         .unwrap()
         .filter_map(|e| e.ok())

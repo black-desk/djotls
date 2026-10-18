@@ -855,10 +855,15 @@ impl<'a> FmtWriter<'a> {
                             self.apply_prefix();
                             self.push_word("{")?;
                             self.commit_word(true, out)?;
+                            // Block-attribute continuations, including comments,
+                            // need indentation relative to their enclosing block.
+                            // Keep the extra space off the opening line.
+                            self.prefix.push(" ".to_string());
                             let attr_snapshot = self.attr.clone();
                             self.render_attr(&attr_snapshot, out)?;
                             self.push_word("}")?;
                             self.commit_word(true, out)?;
+                            self.prefix.pop();
                             self.wrap(out)?;
                             // Don't set need_blankline — block attributes attach
                             // to the next element without a blank line.
@@ -1286,11 +1291,30 @@ impl<'a> FmtWriter<'a> {
                     }
                     "comment" => {
                         let val = self.src(event);
-                        // Strip leading/trailing % markers and normalize whitespace
+                        // Comment events span source lines, including enclosing
+                        // quote markers. Remove those markers on continuation
+                        // lines so each formatting pass does not copy them into
+                        // the comment text and grow another layer of `>`s.
+                        let quote_depth = self.prefix.iter().filter(|p| *p == "> ").count();
                         let val = val
                             .trim_start_matches('%')
                             .trim_end_matches('%')
-                            .split_whitespace()
+                            .lines()
+                            .enumerate()
+                            .flat_map(|(i, mut line)| {
+                                if i > 0 {
+                                    for _ in 0..quote_depth {
+                                        let Some(rest) = line.trim_start().strip_prefix('>') else {
+                                            break;
+                                        };
+                                        if !rest.is_empty() && !rest.starts_with([' ', '\t']) {
+                                            break;
+                                        }
+                                        line = rest;
+                                    }
+                                }
+                                line.split_whitespace()
+                            })
                             .collect::<Vec<_>>()
                             .join(" ");
                         self.attr.parts.push((AttrKind::Comment, val));

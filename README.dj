@@ -3,8 +3,8 @@
 # djotls
 
 { % View README in HTML:
-https://black-desk.github.io/djot-html-preview?url=https://github.com/black-desk/djotls/blob/master/README.dj
-% }
+ https://black-desk.github.io/djot-html-preview?url=https://github.com/black-desk/djotls/blob/master/README.dj
+ % }
 
 [![codecov](
 https://codecov.io/gh/black-desk/djotls/graph/badge.svg?token=GF5SAU9WIC
