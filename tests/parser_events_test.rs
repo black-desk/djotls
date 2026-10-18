@@ -402,6 +402,10 @@ fn main() {
     for (name, input) in [
         ("attribute-values", include_str!("attribute-values.in")),
         ("div-boundaries", include_str!("div-boundaries.in")),
+        (
+            "link-destination-whitespace",
+            include_str!("link-destination-whitespace.in"),
+        ),
     ] {
         for width in [24, 72] {
             trials.push(Trial::test(
