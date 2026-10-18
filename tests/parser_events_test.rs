@@ -400,6 +400,19 @@ fn main() {
     let mut trials = Vec::new();
 
     for (name, input) in [
+        ("inline", "Text{title=\"first\nsecond\"}.\n"),
+        ("quoted", "> Text{title=\"first\n> second\"}.\n"),
+        ("image", "![image](target){title=\"first\nsecond\"}.\n"),
+    ] {
+        trials.push(Trial::test(
+            format!("multiline-attribute-events::{name}"),
+            move || run_parser_event_test(name, 0, input),
+        ));
+    }
+
+    for (name, input) in [
+        ("multiline-comment", include_str!("multiline-comment.in")),
+        ("nested-attributes", include_str!("handle-nest-attrs.in")),
         ("attribute-values", include_str!("attribute-values.in")),
         ("div-boundaries", include_str!("div-boundaries.in")),
         ("ordered-list-start", include_str!("ordered-list-start.in")),

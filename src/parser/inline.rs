@@ -210,9 +210,29 @@ impl InlineParser {
             });
         }
 
-        // Remove any placeholder markers from image fixup, then sort by position
+        // Image fixup appends markers that need sorting back into place.
+        // Attribute events must keep their emitted order as a group: djot.js
+        // emits a continuation's closing quote before its final value fragment,
+        // even though that fragment starts earlier in the source.
         self.matches.retain(|m| m.annot != "__remove__");
-        self.matches.sort_by_key(|m| m.startpos);
+        let mut attribute_ranges = Vec::new();
+        let mut attribute_start = None;
+        for event in &self.matches {
+            if event.annot == "+attributes" {
+                attribute_start = Some(event.startpos);
+            } else if event.annot == "-attributes" {
+                if let Some(start) = attribute_start.take() {
+                    attribute_ranges.push((start, event.endpos));
+                }
+            }
+        }
+        self.matches.sort_by_key(|event| {
+            let i = attribute_ranges.partition_point(|(_, end)| *end < event.startpos);
+            attribute_ranges
+                .get(i)
+                .filter(|(start, _)| *start <= event.startpos)
+                .map_or(event.startpos, |(start, _)| *start)
+        });
 
         self.matches
     }
