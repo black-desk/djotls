@@ -34,7 +34,15 @@ Formatter cases pair `tests/<name>.in` with `tests/<name>.out`; every
 input to set its test width (default 72). The README and this guide are
 also formatter fixtures through symlinks in `tests/`, so their `.dj`
 sources must be idempotent under `djotfmt`. Parser cases come from the
-pinned djot.js suite. Unit and stdio tests cover analysis, text
+pinned djot.js suite. The same harness runs `formatter-semantics::*`
+regressions at widths 24 and 72: it compares Djot.js ASTs before and
+after formatting, and checks idempotency. These cases cover comments,
+attributes, divs, link targets, ordered lists, code blocks and tables
+inside lists. The comparison ignores ordinary text wrapping and list
+tightness, while retaining attributes, destinations, list types and
+starting ordinals, code contents and block structure.
+
+Unit and stdio tests cover analysis, text
 coordinates, navigation, completion, diagnostics, references, rename and
 file moves.
 
