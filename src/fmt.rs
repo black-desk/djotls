@@ -389,11 +389,13 @@ impl<'a> FmtWriter<'a> {
                         let v = &attr.parts[i + 1].1;
                         // Quote the value if it contains whitespace or
                         // characters that would break bare-value parsing.
-                        let needs_quotes = v.contains(|c: char| c.is_whitespace())
-                            || v.contains('"')
-                            || v.contains('=')
-                            || v.contains('}')
-                            || v.contains('{');
+                        // Bare values only accept ASCII key characters. Keep
+                        // source escapes inside quotes so backslashes, quotes,
+                        // punctuation and empty values survive another parse.
+                        let needs_quotes = v.is_empty()
+                            || !v
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '-'));
                         if needs_quotes {
                             self.push_word(&format!("{}=\"{}\"", val, v))?;
                         } else {
@@ -1287,7 +1289,28 @@ impl<'a> FmtWriter<'a> {
                     }
                     "value" => {
                         let val = self.src(event);
-                        self.attr.parts.push((AttrKind::Value, val.to_string()));
+                        // One quoted value may arrive in several events, with
+                        // quote-marker events between them. Match djot.js's
+                        // per-fragment whitespace normalization before joining;
+                        // source escapes stay encoded for render_attr.
+                        let mut normalized = String::new();
+                        let mut space = false;
+                        for c in val.chars() {
+                            if matches!(c, ' ' | '\r' | '\n') {
+                                if !space {
+                                    normalized.push(' ');
+                                }
+                                space = true;
+                            } else {
+                                normalized.push(c);
+                                space = false;
+                            }
+                        }
+                        if let Some((AttrKind::Value, previous)) = self.attr.parts.last_mut() {
+                            previous.push_str(&normalized);
+                        } else {
+                            self.attr.parts.push((AttrKind::Value, normalized));
+                        }
                     }
                     "comment" => {
                         let val = self.src(event);

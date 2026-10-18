@@ -146,6 +146,39 @@ fn check_djot_available() -> bool {
         .unwrap_or(false)
 }
 
+fn run_formatter_semantics(input: &str, max_cols: usize) -> Result<(), Failed> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let formatted = djotls::fmt::format(input, &djotls::fmt::FmtConfig { max_cols });
+    assert_eq!(
+        djotls::fmt::format(&formatted, &djotls::fmt::FmtConfig { max_cols }),
+        formatted,
+        "formatter must also be idempotent"
+    );
+    let mut child = Command::new("node")
+        .arg("tests/formatter_semantics.cjs")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    child.stdin.take().unwrap().write_all(
+        serde_json::to_string(&serde_json::json!({"source": input, "formatted": formatted}))
+            .unwrap()
+            .as_bytes(),
+    )?;
+    let result = child.wait_with_output()?;
+    if !result.status.success() {
+        return Err(format!(
+            "Formatted source:\n{formatted}\n{}",
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// Path to the pinned djot.js submodule, relative to the crate root (integration
 /// tests run with the crate root as their working directory).
 const DJOT_JS: &str = "third_party/djot.js";
@@ -365,6 +398,15 @@ fn main() {
 
     let test_dir = std::path::Path::new("third_party/djot.js/test");
     let mut trials = Vec::new();
+
+    for (name, input) in [("attribute-values", include_str!("attribute-values.in"))] {
+        for width in [24, 72] {
+            trials.push(Trial::test(
+                format!("formatter-semantics::{name}::{width}"),
+                move || run_formatter_semantics(input, width),
+            ));
+        }
+    }
 
     // Keep the block-attribute continuation contract explicit, as well as
     // comparing every event with djot.js. Losing indentation turns comments
