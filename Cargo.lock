@@ -201,7 +201,6 @@ dependencies = [
  "percent-encoding",
  "pretty_assertions",
  "regex",
- "roman",
  "serde_json",
  "tokio",
  "tower-lsp-server",
@@ -702,12 +701,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "roman"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9f88af150ddaeec4dc9b1a80061ecb0f5459e1c720ebe15ebb2b93f4e6b6272"
 
 [[package]]
 name = "scopeguard"

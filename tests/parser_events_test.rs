@@ -402,6 +402,7 @@ fn main() {
     for (name, input) in [
         ("attribute-values", include_str!("attribute-values.in")),
         ("div-boundaries", include_str!("div-boundaries.in")),
+        ("ordered-list-start", include_str!("ordered-list-start.in")),
         (
             "link-destination-whitespace",
             include_str!("link-destination-whitespace.in"),

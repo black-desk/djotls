@@ -39,21 +39,6 @@ enum Alignment {
     Center,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum ListStyle {
-    Dash,
-    Star,
-    Plus,
-    Decimal,
-    AlphaLower,
-    AlphaUpper,
-    RomanLower,
-    RomanUpper,
-    ParenParen,
-    Task,
-    Description,
-}
-
 struct TableCellData {
     content: String,
 }
@@ -143,7 +128,7 @@ struct FmtWriter<'a> {
     list_item_start: bool,
 
     // List tracking
-    list_style_stack: Vec<ListStyle>,
+    list_task_stack: Vec<bool>,
 
     // Table
     table_data: Option<TableData>,
@@ -205,7 +190,7 @@ impl<'a> FmtWriter<'a> {
             no_wrap: false,
             list_item_start: false,
             prefix: Vec::new(),
-            list_style_stack: Vec::new(),
+            list_task_stack: Vec::new(),
             table_data: None,
             attr: AttrState::new(),
             in_block_attrs: false,
@@ -328,40 +313,6 @@ impl<'a> FmtWriter<'a> {
             self.source[event.startpos..].to_string()
         } else {
             String::new()
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // List style parsing
-    // -----------------------------------------------------------------------
-
-    fn parse_list_style(annot: &str) -> ListStyle {
-        // annot is like "+list|-" or "+list|1." or "+list|-X"
-        let rest = annot.split_once('|').map(|(_, r)| r).unwrap_or("");
-        if rest.starts_with("-X") || rest.starts_with("*X") || rest.starts_with("+X") {
-            ListStyle::Task
-        } else if rest == ":" || rest == ":|" {
-            ListStyle::Description
-        } else if rest == "-" || rest == "*" || rest == "+" {
-            match rest {
-                "-" => ListStyle::Dash,
-                "*" => ListStyle::Star,
-                "+" => ListStyle::Plus,
-                _ => ListStyle::Dash,
-            }
-        } else if rest.starts_with('(') {
-            ListStyle::ParenParen
-        } else if let Some(ch) = rest.chars().next() {
-            match ch {
-                '1' => ListStyle::Decimal,
-                'a' => ListStyle::AlphaLower,
-                'A' => ListStyle::AlphaUpper,
-                'i' => ListStyle::RomanLower,
-                'I' => ListStyle::RomanUpper,
-                _ => ListStyle::Dash,
-            }
-        } else {
-            ListStyle::Dash
         }
     }
 
@@ -577,9 +528,6 @@ impl<'a> FmtWriter<'a> {
     ) -> std::fmt::Result {
         log::trace!("Start fmt render events");
 
-        // List item counter per list nesting level
-        let mut list_counter: Vec<u64> = Vec::new();
-
         for event in events {
             let event = &event;
             let annot = &event.annot;
@@ -648,95 +596,26 @@ impl<'a> FmtWriter<'a> {
                     "list" => {
                         if is_open {
                             self.blankline(out)?;
-                            let style = Self::parse_list_style(annot);
-                            self.list_style_stack.push(style);
-                            list_counter.push(0);
+                            let task = annot.split('|').nth(1).is_some_and(|s| s.ends_with('X'));
+                            self.list_task_stack.push(task);
                         } else {
-                            self.list_style_stack.pop();
-                            list_counter.pop();
+                            self.list_task_stack.pop();
                         }
                     }
                     "list_item" => {
                         if is_open {
                             self.blankline(out)?;
                             self.apply_prefix();
-                            let style = self
-                                .list_style_stack
-                                .last()
-                                .cloned()
-                                .unwrap_or(ListStyle::Dash);
-                            *list_counter.last_mut().unwrap() += 1;
-                            let counter = *list_counter.last().unwrap();
-
-                            match style {
-                                ListStyle::Dash => {
-                                    self.push_raw("- ")?;
-                                    self.prefix.push("  ".to_string());
-                                }
-                                ListStyle::Star => {
-                                    self.push_raw("* ")?;
-                                    self.prefix.push("  ".to_string());
-                                }
-                                ListStyle::Plus => {
-                                    self.push_raw("+ ")?;
-                                    self.prefix.push("  ".to_string());
-                                }
-                                ListStyle::Task => {
-                                    // marker and prefix emitted by checkbox_* event
-                                }
-                                ListStyle::Description => {
-                                    self.push_raw(": ")?;
-                                    self.prefix.push("  ".to_string());
-                                }
-                                ListStyle::Decimal => {
-                                    let n = counter.to_string();
-                                    self.push_raw(&n)?;
-                                    self.push_raw(". ")?;
-                                    let w = n.len() + 2;
-                                    self.prefix.push(" ".repeat(w));
-                                }
-                                ListStyle::AlphaLower => {
-                                    let ch = ((counter as u8 - 1) + b'a') as char;
-                                    let n = ch.to_string();
-                                    self.push_raw(&n)?;
-                                    self.push_raw(". ")?;
-                                    self.prefix.push("   ".to_string());
-                                }
-                                ListStyle::AlphaUpper => {
-                                    let ch = ((counter as u8 - 1) + b'A') as char;
-                                    let n = ch.to_string();
-                                    self.push_raw(&n)?;
-                                    self.push_raw(". ")?;
-                                    self.prefix.push("   ".to_string());
-                                }
-                                ListStyle::RomanLower => {
-                                    let n = roman::to(counter.try_into().unwrap_or(1))
-                                        .unwrap_or_default()
-                                        .to_lowercase();
-                                    self.push_raw(&n)?;
-                                    self.push_raw(". ")?;
-                                    let w = n.len() + 2;
-                                    self.prefix.push(" ".repeat(w));
-                                }
-                                ListStyle::RomanUpper => {
-                                    let n = roman::to(counter.try_into().unwrap_or(1))
-                                        .unwrap_or_default()
-                                        .to_uppercase();
-                                    self.push_raw(&n)?;
-                                    self.push_raw(". ")?;
-                                    let w = n.len() + 2;
-                                    self.prefix.push(" ".repeat(w));
-                                }
-                                ListStyle::ParenParen => {
-                                    let n = counter.to_string();
-                                    self.push_raw("(")?;
-                                    self.push_raw(&n)?;
-                                    self.push_raw(") ")?;
-                                    let w = n.len() + 3;
-                                    self.prefix.push(" ".repeat(w));
-                                }
-                            }
-                            if style != ListStyle::Task {
+                            if !self.list_task_stack.last().copied().unwrap_or(false) {
+                                // Keep the source marker. Ordered-list annotations
+                                // describe style, not start, and later items can
+                                // resolve an ambiguous Roman/alphabetic style.
+                                // Reconstructing markers eagerly loses either
+                                // the ordinal or that disambiguating evidence.
+                                let marker = self.src(event);
+                                self.push_raw(&marker)?;
+                                self.push_raw(" ")?;
+                                self.prefix.push(" ".repeat(marker.width() + 1));
                                 self.list_item_start = true;
                             }
                         } else {
