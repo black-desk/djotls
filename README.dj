@@ -2,30 +2,28 @@
 
 # djotls
 
+{ % View README in HTML:
+https://black-desk.github.io/djot-html-preview?url=https://github.com/black-desk/djotls/blob/master/README.dj
+% }
+
 [![codecov](
 https://codecov.io/gh/black-desk/djotls/graph/badge.svg?token=GF5SAU9WIC
 )](https://codecov.io/gh/black-desk/djotls)
 
 ::: warning
 
-{*This project is under very early stage and not ready for use.*}
+{*This project is at a very early stage and is not ready for production
+use.*}
 
 :::
 
 djotls is a [`Djot`](https://djot.net) toolkit written in Rust, with a
-parser,
-formatter (`djotfmt`) and language server (`djotls`).
+parser, formatter (`djotfmt`) and language server (`djotls`).
 
 ## Build
 
 ``` bash
 cargo build --release
-```
-
-## Test
-
-``` bash
-cargo test --release
 ```
 
 ## Install
@@ -52,14 +50,15 @@ djotls --help
 ## Language server
 
 The `djotls` executable provides formatting, navigation, references,
-heading outlines, completion and diagnostics over stdio.
-See the [language server guide](docs/lsp.md) for setup and scope.
+heading outlines, completion and diagnostics over stdio. See the
+[language server guide](docs/lsp.dj) for setup and scope.
 
 ## Contributing
 
-- [Djot syntax reference](
-  https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html
-  )
+See the [contribution guide](CONTRIBUTING.dj) for test prerequisites,
+documentation updates and release procedures. The [Djot syntax
+reference](third_party/djot/doc/syntax.md) is included through the
+upstream submodule.
 
 ## Bugs
 
