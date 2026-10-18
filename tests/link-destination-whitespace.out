@@ -1,0 +1,17 @@
+[text](a\ b)
+
+[closed](hello *ab*)
+
+[tabs](a	b)
+
+![image](a\ b.png)
+
+> [text](a\ b)
+
+- [text](hello *ab*)
+
+> > [text](a\ b)
+
+[long](https://example.com/a\ very\ long\ target\ with\ spaces)
+
+[escaped](a\(b\)\*\_\!\$\\z)

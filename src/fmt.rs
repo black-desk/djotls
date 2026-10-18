@@ -1434,10 +1434,11 @@ impl<'a> FmtWriter<'a> {
     }
 
     fn emit_str_words<W: std::fmt::Write>(&mut self, text: &str, out: &mut W) -> std::fmt::Result {
-        // Inside a link destination, treat the whole content as one word
-        // (multi-line URLs should not be split at whitespace).
+        // Destinations discard line endings, but spaces and tabs (including
+        // escaped spaces) belong to the target. Keep them in a single word
+        // so wrapping cannot insert or delete meaningful whitespace.
         if self.in_destination {
-            let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+            let cleaned: String = text.chars().filter(|c| !matches!(c, '\r' | '\n')).collect();
             if !cleaned.is_empty() {
                 self.push_word(&cleaned)?;
             }
