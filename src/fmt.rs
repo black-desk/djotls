@@ -147,6 +147,7 @@ struct FmtWriter<'a> {
 
     // For code_block: track if we need to emit language
     code_block_need_lang: bool,
+    code_fence: Option<String>,
 
     // Heading level tracking (parsed from source)
     heading_level: usize,
@@ -197,6 +198,7 @@ impl<'a> FmtWriter<'a> {
             in_inline_attrs: false,
             verbatim_ticks: String::new(),
             code_block_need_lang: false,
+            code_fence: None,
             heading_level: 0,
             in_ref_def: false,
             have_content: false,
@@ -271,7 +273,18 @@ impl<'a> FmtWriter<'a> {
         if self.table_data.is_some() {
             return Ok(());
         }
-        out.write_str(self.pending_line.trim_end())?;
+        if self.code_fence.is_some() && !self.code_block_need_lang {
+            // Code whitespace is content, including trailing spaces and tabs.
+            // Trim only an empty container prefix, not any code after it.
+            let prefix: String = self.prefix.concat();
+            if self.pending_line == prefix {
+                out.write_str(self.pending_line.trim_end())?;
+            } else {
+                out.write_str(&self.pending_line)?;
+            }
+        } else {
+            out.write_str(self.pending_line.trim_end())?;
+        }
         out.write_str("\n")?;
         self.pending_line.clear();
         self.space_after_pending_word = false;
@@ -700,7 +713,12 @@ impl<'a> FmtWriter<'a> {
                         if is_open {
                             self.blankline(out)?;
                             self.apply_prefix();
-                            self.push_raw("```")?;
+                            // Keep the opening delimiter and length. Shortening
+                            // it can turn a literal content line into a closer.
+                            let fence = self.src(event);
+                            self.push_raw(&fence)?;
+                            self.code_fence = Some(fence);
+                            self.no_wrap = true;
                             self.raw = true;
                             self.code_block_need_lang = true;
                             // Don't wrap yet — language may follow
@@ -713,10 +731,12 @@ impl<'a> FmtWriter<'a> {
                                 self.wrap(out)?;
                             }
                             self.apply_prefix();
-                            self.push_raw("```")?;
+                            let fence = self.code_fence.take().unwrap();
+                            self.push_raw(&fence)?;
                             self.wrap(out)?;
                             self.need_blankline = true;
                             self.raw = false;
+                            self.no_wrap = false;
                             self.code_block_need_lang = false;
                         }
                     }
@@ -1018,6 +1038,9 @@ impl<'a> FmtWriter<'a> {
                                 if !self.pending_word.is_empty() {
                                     self.commit_word(false, out)?;
                                 }
+                                // Even an empty code line needs its enclosing
+                                // quote prefix, or it terminates the quote.
+                                self.apply_prefix();
                                 self.wrap(out)?;
                             }
                         } else if self.code_block_need_lang {
