@@ -4,6 +4,7 @@
 
 //! Isolated, opt-in accounting of bytes requested from the Rust allocator.
 //! Unlike RSS or mallinfo, this excludes allocator padding and freed arenas.
+//! Run instructions, methodology and historical results: docs/memory.dj.
 use djotls::analysis::Document;
 use std::{
     alloc::{GlobalAlloc, Layout, System},

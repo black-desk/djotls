@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Formatter that consumes [`parser::Event`] and emits formatted Djot.
-//!
-//! This is an alternative renderer to the one in [`renderer`] — it uses the
-//! new djot.js-based parser instead of `jotdown`.
+//! File I/O and in-place replacement belong to the djotfmt binary.
 
 use unicode_width::UnicodeWidthStr;
 

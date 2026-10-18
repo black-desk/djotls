@@ -104,6 +104,14 @@ pub enum CompletionKind {
     Template,
 }
 
+/// Immutable analysis of one complete source version, without an AST.
+///
+/// Retain block boundaries instead of parser events: events and their owned
+/// annotation strings dominate long-lived memory in markup-heavy workspaces.
+/// Completion can recover its context by reparsing one top-level block. This
+/// trades query allocations for smaller snapshots; one enormous block still
+/// requires a large temporary parse. Measurements and historical comparisons
+/// are in docs/memory.dj. Construction still collects the full event stream.
 pub struct Document {
     pub source: String,
     block_starts: Box<[usize]>,
@@ -763,6 +771,8 @@ fn completion_context_in(
 
 /// Partition source at top-level block starts, retaining intervening whitespace.
 /// Block attributes belong to the following block and share its parsing range.
+/// Splitting at nested blocks would lose their enclosing list/quote context;
+/// dropping preceding attributes would allow completion inside attribute text.
 fn block_starts(source: &str, events: &[Event]) -> Box<[usize]> {
     let mut starts = vec![0];
     let mut depth = 0usize;

@@ -3107,6 +3107,7 @@ fn stdio_workspace_reference_labels_and_footnotes_remain_document_local() {
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "opt-in Linux process memory probe; run in release mode with --nocapture"]
+// Run instructions and RSS interpretation: docs/memory.dj.
 fn stdio_memory_probe() {
     fn memory(server: &Server) -> (u64, u64) {
         let status =

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Chen Linxuan <me@black-desk.cn>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Protocol adapter. Analysis and text coordinates are independent of this crate.
+//! Protocol adapter using tower-lsp-server; analysis is independent of its types
+//! and async runtime. Protocol positions use UTF-16; analysis uses UTF-8 bytes.
 use djotls::{
     analysis::{
         links::{Resolution, Resolver},
@@ -35,6 +36,10 @@ struct Snapshot {
 
 pub struct Backend {
     client: Client,
+    // Notification updates must become visible before their first await so a
+    // following request sees the new version. Immutable Arc snapshots let disk
+    // work continue without holding this lock. Open-buffer analysis currently
+    // runs synchronously; large-document scheduling remains future work.
     documents: RwLock<HashMap<Uri, Arc<Snapshot>>>,
     workspace: tokio::sync::Mutex<Workspace>,
     diagnostics: tokio::sync::Mutex<()>,
@@ -107,6 +112,9 @@ impl Backend {
     }
 
     async fn refresh_diagnostics(&self) -> Result<()> {
+        // Recheck all open buffers so edits to targets update incoming-link
+        // errors too. This avoids a reverse dependency index, at the cost of
+        // repeated validation. Resolver caches target reads within this batch.
         // Serialize diagnostic batches; buffers can still update while disk I/O
         // runs. Only publish results whose immutable snapshot is still current.
         let _guard = self.diagnostics.lock().await;
