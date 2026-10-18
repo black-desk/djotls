@@ -49,6 +49,8 @@ enum TableRow {
 }
 
 struct TableData {
+    /// A list/task marker already emitted before the table's first cell.
+    opening_prefix: String,
     /// All rows in order (data and separator interleaved).
     rows: Vec<TableRow>,
     current_row_cells: Vec<TableCellData>,
@@ -60,8 +62,9 @@ struct TableData {
 }
 
 impl TableData {
-    fn new() -> Self {
+    fn new(opening_prefix: String) -> Self {
         Self {
+            opening_prefix,
             rows: Vec::new(),
             current_row_cells: Vec::new(),
             current_cell_content: String::new(),
@@ -493,6 +496,9 @@ impl<'a> FmtWriter<'a> {
 
         // Second pass: render rows with correct alignment.
         for (i, row) in td.rows.iter().enumerate() {
+            if i == 0 {
+                self.pending_line.clone_from(&td.opening_prefix);
+            }
             let alignments = &row_alignments[i];
             match row {
                 TableRow::Separator(_) => {
@@ -641,7 +647,15 @@ impl<'a> FmtWriter<'a> {
                     }
                     "table" => {
                         if is_open {
-                            self.table_data = Some(TableData::new());
+                            if !self.list_item_start {
+                                self.blankline(out)?;
+                            }
+                            // Cell rendering reuses the line buffer. Save a
+                            // leading list marker before the first cell clears
+                            // it, then restore it only on the first table row.
+                            let opening_prefix = std::mem::take(&mut self.pending_line);
+                            self.table_data = Some(TableData::new(opening_prefix));
+                            self.list_item_start = false;
                             self.no_wrap = true;
                         } else {
                             if self.table_data.is_some() {

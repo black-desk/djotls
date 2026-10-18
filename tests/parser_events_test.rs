@@ -403,6 +403,7 @@ fn main() {
         ("attribute-values", include_str!("attribute-values.in")),
         ("div-boundaries", include_str!("div-boundaries.in")),
         ("ordered-list-start", include_str!("ordered-list-start.in")),
+        ("list-tables", include_str!("list-tables.in")),
         (
             "code-block-preservation",
             include_str!("code-block-preservation.in"),
