@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod common;
+
 use libtest_mimic::{Arguments, Failed, Trial};
 use pretty_assertions::assert_eq;
 
@@ -72,12 +74,7 @@ fn run_idempotent_test(path: std::path::PathBuf) -> Result<(), Failed> {
 
     let output = djotls::fmt::format(&input, &config);
 
-    assert_eq!(
-        output,
-        input,
-        "idempotent test failed for {:?}",
-        path.file_stem().unwrap()
-    );
+    assert_eq!(output, input, "idempotent test failed for {:?}", path);
     Ok(())
 }
 
@@ -122,6 +119,14 @@ fn main() {
 
         let name = format!("fmt::idempotent::{}", stem);
 
+        trials.push(Trial::test(name, move || run_idempotent_test(path)));
+    }
+
+    let documents = common::discover_documents();
+    assert!(!documents.is_empty(), "no project documents found");
+    for path in documents {
+        let name = format!("fmt::docs::{}", path.display());
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
         trials.push(Trial::test(name, move || run_idempotent_test(path)));
     }
 

@@ -5,6 +5,9 @@
 [package]
 name = "djotls"
 default-run = "djotfmt"
+# To release, update this version and Cargo.lock, then merge to master.
+# After CI passes, CD creates v<version> and publishes the binaries and crate.
+# Use a prerelease version such as 0.2.0-rc.3 for an RC.
 version = "0.2.0-rc.2"
 edition = "2021"
 license = "GPL-3.0-or-later"

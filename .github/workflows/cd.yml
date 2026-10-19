@@ -17,6 +17,10 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     steps:
+      # The shared action validates Cargo.toml's version, tags it, and publishes
+      # GitHub Release archives and the crate. If publishing fails after tagging,
+      # re-run failed jobs on the original CI run to retry the same commit;
+      # crate versions already published to crates.io are skipped.
       - uses: black-desk/workflows/goreleaser@master
         with:
           publish-crate: "true"

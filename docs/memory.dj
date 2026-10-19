@@ -2,7 +2,8 @@
 
 # Memory measurement
 
-These opt-in developer probes complement the [test workflow](../CONTRIBUTING.dj#Test). The snapshot design and its memory tradeoff
+These opt-in developer probes complement the [test workflow](
+../CONTRIBUTING.dj#Test). The snapshot design and its memory tradeoff
 are documented beside `Document` in [the analysis
 module](../src/analysis/mod.rs).
 
@@ -64,7 +65,7 @@ Massif run drove the same workload with 100 documents (1.17 MiB source).
 Peak requested heap was 13.3 MiB, plus about 3.0 MiB of allocator
 overhead estimated by Massif. The `Vec<parser::Event>` backing
 allocations accounted for 8.4 MiB, about 63 percent of requested heap at
-that peak; this excludes the events' separately allocated annotation
+that peak; this excludes the events'} separately allocated annotation
 strings. Stacks led through `Document::new` and primarily
 `Workspace::scan`. During corpus removal and shutdown, sampled requested
 heap fell to 0.64 MiB. This identifies retained parser events as a major
@@ -81,7 +82,7 @@ run:
 cargo test --release --test analysis_memory_test -- --ignored --exact analysis_memory_probe --nocapture --test-threads=1
 ```
 
-This separate test binary wraps Rust's system allocator with
+This separate test binary wraps Rust'}s system allocator with
 allocation-free counters. It measures retained requested bytes and peak
 requested bytes during `Document::new`, including source text, temporary
 event storage, annotation strings and analysis tables. Retained bytes
@@ -90,7 +91,7 @@ completion allocations and checks that each query returns to its
 retained-allocation baseline. Inputs and warmed, shared parser regex
 caches are outside the baseline. Allocator padding, freed arenas, LSP
 runtime and Git indexing metadata are excluded. Peak accounting does not
-include internal implementation details of the underlying allocator's
+include internal implementation details of the underlying allocator'}s
 `realloc`.
 
 Before switching snapshot events to a boxed slice, one x86_64 release

@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod common;
+
 use libtest_mimic::{Arguments, Failed, Trial};
 use pretty_assertions::assert_eq;
 
@@ -549,6 +551,17 @@ fn main() {
                 run_parser_event_test(&format!("{}.out", stem), 0, &out_content)
             }));
         }
+    }
+
+    for path in common::discover_documents() {
+        let name = format!("docs::{}", path.display());
+        trials.push(Trial::test(name, move || {
+            let input = std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&path),
+            )
+            .map_err(|err| err.to_string())?;
+            run_parser_event_test(&path.to_string_lossy(), 0, &input)
+        }));
     }
 
     libtest_mimic::run(&args, trials).exit();
