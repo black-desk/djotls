@@ -11,20 +11,23 @@ selects it by default.
 
 ## Editor setup
 
-Configure your editor's LSP client to run `djotls` for Djot buffers.
+Configure your editor'}s LSP client to run `djotls` for Djot buffers.
 Use language ID `djot` and associate `.dj` and `.djot` files with it.
-Both extensions work as open buffers. Automatic workspace indexing and anchor
-lookup in unopened files currently recognize only the exact `.dj` extension.
+Both extensions work as open buffers. Automatic workspace indexing and
+anchor lookup in unopened files currently recognize only the exact `.dj`
+extension.
 
 ### Neovim 0.11 or newer
 
 Install from the repository with `cargo install --path . --locked`.
-Make sure `~/.cargo/bin` is on Neovim's `PATH`: `:echo exepath('djotls')`
-should print the executable's path. If you only built the project, replace
-`'djotls'` below with the absolute path to `target/release/djotls`.
+Make sure `~/.cargo/bin` is on Neovim'}s `PATH`: `:echo
+exepath('djotls')` should print the executable'}s path. If you only
+built the project, replace `'djotls'` below with the absolute path to
+`target/release/djotls`.
 
-Put this in `init.lua`. It uses Neovim's built-in LSP client, completion
-and snippets; `nvim-lspconfig`, Mason and a completion plugin are optional.
+Put this in `init.lua`. It uses Neovim'}s built-in LSP client,
+completion and snippets; `nvim-lspconfig`, Mason and a completion plugin
+are optional.
 
 ``` lua
 vim.filetype.add({ extension = { dj = 'djot', djot = 'djot' } })
@@ -58,17 +61,17 @@ clients attached to the current buffer.
 
 In Insert mode, use `<C-x><C-o>` to request completion manually and
 `<C-y>` to accept a selected candidate. Automatic triggering is enabled
-above for the server's trigger characters. Try `[`, `[text][`, `[^`, or
+above for the server'}s trigger characters. Try `[`, `[text][`, `[^`, or
 `[text](#` with matching definitions in the document. If you already use
 a completion plugin, keep its setup and omit `vim.lsp.completion.enable`
 to avoid running two completion UIs.
 
 `gd` on an inline link or a reference-definition destination opens the
 local target file at its heading or explicit anchor. Without a fragment,
-it goes to the start of the file. On a reference link's label, `gd` first
-goes to the label definition in the current file; use it again on that
-definition's destination to follow the link. The text part of a reference
-link can also navigate directly to its destination.
+it goes to the start of the file. On a reference link'}s label, `gd`
+first goes to the label definition in the current file; use it again on
+that definition'}s destination to follow the link. The text part of a
+reference link can also navigate directly to its destination.
 
 External URLs remain available through `documentLink`. Neovim does not
 provide a built-in `vim.lsp.buf.document_link()` action.
@@ -113,10 +116,11 @@ The mapping opens local files in Neovim and delegates external URLs to
 query strings and heading fragments for local files. Use `gd` for
 same-document and cross-file anchors.
 
-Enable your client's completion UI and snippet support to use link
-placeholders. Automatic completion triggering is a client setting; manual
-completion also works. Ordinary bracket pairing remains an editor setting.
-No custom protocol or editor-specific plugin is required by this server.
+Enable your client'}s completion UI and snippet support to use link
+placeholders. Automatic completion triggering is a client setting;
+manual completion also works. Ordinary bracket pairing remains an editor
+setting. No custom protocol or editor-specific plugin is required by
+this server.
 
 ## Supported features
 
@@ -127,120 +131,128 @@ The server supports:
 - A hierarchical heading outline (a flat outline for clients that do not
   support hierarchical document symbols).
 
-- Workspace heading search through `workspace/symbol`, including unopened
-  `.dj` files in the Git repositories containing the workspace folders.
-  Names use `Title (path#anchor)`, with the path relative to the Git
-  repository root and each heading's explicit or generated anchor.
-  Standalone local files use their filename; non-file documents use their
-  URI. No `containerName` is returned. Duplicate titles keep separate file
-  locations. Search matches name substrings without case sensitivity,
-  including paths and anchors.
+- Workspace heading search through `workspace/symbol`, including
+  unopened `.dj` files in the Git repositories containing the workspace
+  folders. Names use `Title (path#anchor)`, with the path relative to
+  the Git repository root and each heading'}s explicit or generated
+  anchor. Standalone local files use their filename; non-file documents
+  use their URI. No `containerName` is returned. Duplicate titles keep
+  separate file locations. Search matches name substrings without case
+  sensitivity, including paths and anchors.
 
-- Definition navigation within the open document for link labels, footnotes,
-  explicit IDs and implicit heading references.
+- Definition navigation within the open document for link labels,
+  footnotes, explicit IDs and implicit heading references.
 
 - Workspace references for headings and explicit IDs through
-  `textDocument/references`. Results include local references, cross-file
-  inline links, images, reference-definition destinations and reference-link
-  uses. Direct destinations select the fragment; indirect uses select the
-  label. Query from a heading, ID, fragment or link text. Link labels and
-  footnotes retain document scope; querying a reference link label finds uses
-  of that label, while its text finds links to the destination anchor.
-  `includeDeclaration` adds the selected definition once.
+  `textDocument/references`. Results include local references,
+  cross-file inline links, images, reference-definition destinations and
+  reference-link uses. Direct destinations select the fragment; indirect
+  uses select the label. Query from a heading, ID, fragment or link
+  text. Link labels and footnotes retain document scope; querying a
+  reference link label finds uses of that label, while its text finds
+  links to the destination anchor. `includeDeclaration` adds the
+  selected definition once.
 
-- Cross-file definition navigation for local inline links, reference-link
-  text and reference-definition destinations. Relative paths resolve from
-  the current document; query strings are ignored for file lookup and
-  fragments locate explicit or generated anchors in `.dj` files. Target
-  files need not be open or included in the workspace index. Links without
-  a fragment (or with an empty fragment) navigate to the start of the file.
+- Cross-file definition navigation for local inline links,
+  reference-link text and reference-definition destinations. Relative
+  paths resolve from the current document; query strings are ignored for
+  file lookup and fragments locate explicit or generated anchors in
+  `.dj` files. Target files need not be open or included in the
+  workspace index. Links without a fragment (or with an empty fragment)
+  navigate to the start of the file.
 
-- Heading and explicit-ID rename through `textDocument/prepareRename` and
-  `textDocument/rename`. Renaming a heading without an explicit ID updates
-  its generated anchor and workspace links. If other generated anchors are
-  renumbered, their links keep pointing to the same headings. Renaming a
-  heading with an explicit ID preserves that ID and its fragment links;
-  title-based references still follow the new title. Renaming an explicit
-  ID updates its links without changing the heading text. A fragment or
-  implicit title reference can also initiate the rename; generated fragments
-  rename the owning heading, while explicit fragments rename the ID.
+- Heading and explicit-ID rename through `textDocument/prepareRename`
+  and `textDocument/rename`. Renaming a heading without an explicit ID
+  updates its generated anchor and workspace links. If other generated
+  anchors are renumbered, their links keep pointing to the same
+  headings. Renaming a heading with an explicit ID preserves that ID and
+  its fragment links; title-based references still follow the new title.
+  Renaming an explicit ID updates its links without changing the heading
+  text. A fragment or implicit title reference can also initiate the
+  rename; generated fragments rename the owning heading, while explicit
+  fragments rename the ID.
 
-  Link paths, query strings and visible link text are preserved. For example,
-  `[Old][]` becomes `[Old][New]` when its heading is renamed to `New`.
-  Reference-link destinations are updated at the definition. New heading
-  names are literal text; inline punctuation is escaped, replacing the old
-  heading's inline formatting. Renames that would remove an embedded ID,
-  create a duplicate anchor or retarget an implicit heading reference are
-  rejected.
+  Link paths, query strings and visible link text are preserved. For
+  example, `[Old][]` becomes `[Old][New]` when its heading is renamed to
+  `New`. Reference-link destinations are updated at the definition. New
+  heading names are literal text; inline punctuation is escaped,
+  replacing the old heading'}s inline formatting. Renames that would
+  remove an embedded ID, create a duplicate anchor or retarget an
+  implicit heading reference are rejected.
 
-- Document-local reference-label and footnote rename, from a definition or
-  resolved use. Only references bound to the selected definition change;
-  duplicate definitions retain their existing precedence. Link text and
-  destinations are preserved, including collapsed links: `[Old][]` becomes
-  `[Old][New]`. Label whitespace is normalized and inline label punctuation
-  is escaped as needed. Conflicting names, syntax changes and names that
-  would capture other references are rejected. Link labels and footnotes
-  have separate namespaces.
+- Document-local reference-label and footnote rename, from a definition
+  or resolved use. Only references bound to the selected definition
+  change; duplicate definitions retain their existing precedence. Link
+  text and destinations are preserved, including collapsed links:
+  `[Old][]` becomes `[Old][New]`. Label whitespace is normalized and
+  inline label punctuation is escaped as needed. Conflicting names,
+  syntax changes and names that would capture other references are
+  rejected. Link labels and footnotes have separate namespaces.
 
 - File and folder moves through `workspace/willRenameFiles` and
   `workspace/didRenameFiles`. Incoming links follow moved targets, and
-  relative outgoing links in moved `.dj` files keep their original targets.
-  Batch moves resolve each link against the original locations. Internal
-  links within a moved folder keep their spelling when they still resolve
-  correctly. Images and reference-definition destinations are included;
-  external URLs, query strings, fragments and link text are preserved.
+  relative outgoing links in moved `.dj` files keep their original
+  targets. Batch moves resolve each link against the original locations.
+  Internal links within a moved folder keep their spelling when they
+  still resolve correctly. Images and reference-definition destinations
+  are included; external URLs, query strings, fragments and link text
+  are preserved.
 
   You can also invoke rename on the path in a local link destination,
   including an image or reference definition. The new name is a path
-  relative to the document containing that link, or an absolute file URI.
-  The server returns text edits at the original URIs followed by a
-  `RenameFile` operation. This requires client support for `documentChanges`
-  and the `rename` resource operation. The source must exist, the new parent
-  directory must exist, and existing destinations are not overwritten.
-  Heading and ID rename remain available on fragments.
+  relative to the document containing that link, or an absolute file
+  URI. The server returns text edits at the original URIs followed by a
+  `RenameFile` operation. This requires client support for
+  `documentChanges` and the `rename` resource operation. The source must
+  exist, the new parent directory must exist, and existing destinations
+  are not overwritten. Heading and ID rename remain available on
+  fragments.
 
 - Completion for link labels after `[text][`, footnotes after `[^`, and
   anchors after `[text](#`.
 
-- Workspace heading completion after `[text](`. Current-document headings
-  sort before headings in other files. Completion inserts `#anchor` for
-  the current file and a URI relative to the current document's directory
-  for other files, including the explicit or generated heading anchor.
-  Titles and destination prefixes can filter candidates. Existing closing
-  parentheses are replaced, and destination paths and anchors are encoded
-  as needed. Open target buffers contribute their unsaved headings.
-  Percent-encoded same-document anchors resolve for definition navigation
-  and reference diagnostics.
+- Workspace heading completion after `[text](`. Current-document
+  headings sort before headings in other files. Completion inserts
+  `#anchor` for the current file and a URI relative to the current
+  document'}s directory for other files, including the explicit or
+  generated heading anchor. Titles and destination prefixes can filter
+  candidates. Existing closing parentheses are replaced, and destination
+  paths and anchors are encoded as needed. Open target buffers
+  contribute their unsaved headings. Percent-encoded same-document
+  anchors resolve for definition navigation and reference diagnostics.
 
 - Inline-link and reference-link templates after `[`. Accept a candidate
-  to insert it; this does not automatically insert text without acceptance.
-  Snippet-capable clients can move between the text and destination fields.
-  Clients without snippet support receive plain text.
+  to insert it; this does not automatically insert text without
+  acceptance. Snippet-capable clients can move between the text and
+  destination fields. Clients without snippet support receive plain
+  text.
 
 - Standard document links for direct links, reference links, images and
   reference-definition destinations. Relative paths resolve against the
   current document URI; Unicode and spaces are encoded as needed. Your
-  client's open-link action can open the target even when it is not already
-  open in the editor. External URLs are supported too. Cross-file query
-  strings and fragments are preserved in document-link targets. Use
-  definition navigation to jump to a local target's source position.
+  client'}s open-link action can open the target even when it is not
+  already open in the editor. External URLs are supported too.
+  Cross-file query strings and fragments are preserved in document-link
+  targets. Use definition navigation to jump to a local target'}s source
+  position.
 
-- Errors for unresolved reference labels, footnotes, local anchors, missing
-  local target files and missing anchors in `.dj` targets. Duplicate
-  definitions and IDs remain warnings. Read failures are reported separately
-  as warnings, rather than as missing anchors. Other local file types are
-  checked for existence; external URLs are not fetched or validated.
+- Errors for unresolved reference labels, footnotes, local anchors,
+  missing local target files and missing anchors in `.dj` targets.
+  Duplicate definitions and IDs remain warnings. Read failures are
+  reported separately as warnings, rather than as missing anchors. Other
+  local file types are checked for existence; external URLs are not
+  fetched or validated.
 
 Completion suppresses suggestions in code, math and parsed attributes.
 Reference completions replace an existing closing bracket and can remove
-empty inline-link punctuation left by a link template. Destination completion
-requests are triggered by `(`, `/` and `#`; clients may also request completion
-manually. Destination completion lists are marked incomplete so clients can
-requery while typing title or path prefixes.
+empty inline-link punctuation left by a link template. Destination
+completion requests are triggered by `(`, `/` and `#`; clients may also
+request completion manually. Destination completion lists are marked
+incomplete so clients can requery while typing title or path prefixes.
 
 Formatting defaults to 72 columns. Clients can pass a positive integer
-`maxColumns` in formatting options to change it. The LSP indentation option
-`tabSize` is not used as a line-width setting.
+`maxColumns` in formatting options to change it. The LSP indentation
+option `tabSize` is not used as a line-width setting.
 
 ## Workspace scope and updates
 
@@ -293,7 +305,7 @@ workspace folders and refreshes diagnostics. A buffer already opened at
 the destination takes precedence over a migrated snapshot. Index
 overlays treat equivalent encoded file URIs as the same file.
 
-The client's file manager must send `willRenameFiles`, apply the
+The client'}s file manager must send `willRenameFiles`, apply the
 returned edits, perform the move and send `didRenameFiles` (when
 advertised). A terminal `mv` or file-watch notification alone cannot
 repair links automatically.

@@ -60,6 +60,8 @@ jobs:
   # crates.io's Trusted Publisher must name ci.yml: this caller's workflow_ref
   # is the OIDC identity even though the publishing job lives in cd.yml. Both
   # caller and publishing job need id-token: write for token exchange.
+  # Configure it for black-desk/djotls with workflow ci.yml and no environment.
+  # Publishing uses OIDC; no long-lived crates.io token is needed.
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: pass

@@ -5,3 +5,16 @@ path = "tests/**"
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Chen Linxuan <me@black-desk.cn>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Djot comments are not recognized by REUSE; keep document licensing here.
+[[annotations]]
+path = ["README.dj", "CONTRIBUTING.dj"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Chen Linxuan <me@black-desk.cn>"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ["docs/lsp.dj", "docs/memory.dj"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Chen Linxuan <me@black-desk.cn>"
+SPDX-License-Identifier = "MIT"
