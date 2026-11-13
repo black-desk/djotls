@@ -9,7 +9,7 @@ use djotls::{
         moves::{self, Moves},
         references::References,
         rename::{FileEdits, Rename},
-        text::LineIndex,
+        text::{escape_inline_text, LineIndex},
         CompletionKind, Document, Severity, SymbolKind as DjotSymbolKind,
     },
     fmt::{self, FmtConfig},
@@ -1224,10 +1224,12 @@ impl LanguageServer for Backend {
         let Some(context) = doc.completion_context(offset(doc, p.position)?) else {
             return Ok(None);
         };
-        if context.kind == CompletionKind::Destination {
+        let template = context.kind == CompletionKind::Template;
+        let snippets = self.snippets.load(Ordering::Relaxed);
+        let mut items = Vec::new();
+        if context.kind == CompletionKind::Destination || template {
             let (_, mut documents) = self.workspace_documents().await?;
             documents.insert(p.text_document.uri.clone(), snapshot.doc.clone());
-            let mut items = Vec::new();
             let prefix = context.prefix.to_lowercase();
             for (uri, target) in documents {
                 let local = uri == p.text_document.uri;
@@ -1256,18 +1258,41 @@ impl LanguageServer for Backend {
                             if local { 0 } else { 1 }
                         )),
                         filter_text: Some(
-                            if !prefix.is_empty() && destination.to_lowercase().starts_with(&prefix)
+                            if !template
+                                && !prefix.is_empty()
+                                && destination.to_lowercase().starts_with(&prefix)
                             {
                                 destination.clone()
                             } else {
-                                title.to_string()
+                                if template {
+                                    format!("[{title} {destination}")
+                                } else {
+                                    title.to_string()
+                                }
                             },
                         ),
-                        insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+                        insert_text_format: Some(if template && snippets {
+                            InsertTextFormat::SNIPPET
+                        } else {
+                            InsertTextFormat::PLAIN_TEXT
+                        }),
                         text_edit: Some(
                             TextEdit::new(
                                 range(doc, context.replace.clone()),
-                                format!("{destination})"),
+                                if template {
+                                    let title = escape_inline_text(title);
+                                    if snippets {
+                                        format!(
+                                            "[${{1:{}}}]({})$0",
+                                            snippet_escape(&title),
+                                            snippet_escape(&destination)
+                                        )
+                                    } else {
+                                        format!("[{title}]({destination})")
+                                    }
+                                } else {
+                                    format!("{destination})")
+                                },
                             )
                             .into(),
                         ),
@@ -1278,14 +1303,14 @@ impl LanguageServer for Backend {
             items.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
             // Requery as the user types: the same candidate can be matched by
             // its title or destination, with an appropriate client filter text.
-            return Ok(Some(CompletionResponse::List(CompletionList {
-                is_incomplete: true,
-                items,
-            })));
+            if !template {
+                return Ok(Some(CompletionResponse::List(CompletionList {
+                    is_incomplete: true,
+                    items,
+                })));
+            }
         }
-        let snippets = self.snippets.load(Ordering::Relaxed);
-        let mut items = Vec::new();
-        if context.kind == CompletionKind::Template {
+        if template && context.prefix.is_empty() {
             for (label, snippet, plain) in [
                 (
                     "Inline link",
@@ -1297,6 +1322,7 @@ impl LanguageServer for Backend {
                 items.push(CompletionItem {
                     label: label.into(),
                     kind: Some(CompletionItemKind::SNIPPET),
+                    sort_text: Some(format!("2:{label}")),
                     insert_text_format: Some(if snippets {
                         InsertTextFormat::SNIPPET
                     } else {
@@ -1316,9 +1342,10 @@ impl LanguageServer for Backend {
         let mut keys = HashSet::new();
         for d in &doc.definitions {
             let applicable = match context.kind {
-                CompletionKind::Link | CompletionKind::Template => {
+                CompletionKind::Link => {
                     matches!(d.kind, DjotSymbolKind::Link | DjotSymbolKind::Heading)
                 }
+                CompletionKind::Template => d.kind == DjotSymbolKind::Link,
                 CompletionKind::Footnote => d.kind == DjotSymbolKind::Footnote,
                 CompletionKind::Anchor => d.kind == DjotSymbolKind::Anchor,
                 CompletionKind::Destination => false,
@@ -1330,17 +1357,22 @@ impl LanguageServer for Backend {
                 if snippets {
                     format!(
                         "[${{1:{}}}][{}]",
-                        snippet_escape(&d.key),
-                        snippet_escape(&d.key)
+                        snippet_escape(&escape_inline_text(&d.key)),
+                        snippet_escape(&escape_inline_text(&d.key))
                     )
                 } else {
-                    format!("[{}][{}]", d.key, d.key)
+                    format!(
+                        "[{}][{}]",
+                        escape_inline_text(&d.key),
+                        escape_inline_text(&d.key)
+                    )
                 }
             } else {
                 format!("{}{}", d.key, context.suffix)
             };
             items.push(CompletionItem {
                 label: d.key.clone(),
+                sort_text: template.then(|| format!("0:{}:reference", d.key)),
                 detail: (!d.destination.is_empty()).then(|| d.destination.clone()),
                 kind: Some(CompletionItemKind::REFERENCE),
                 insert_text_format: Some(if snippets && context.kind == CompletionKind::Template {
@@ -1354,6 +1386,14 @@ impl LanguageServer for Backend {
                 ..Default::default()
             });
         }
-        Ok(Some(CompletionResponse::Array(items)))
+        if template {
+            items.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
+            Ok(Some(CompletionResponse::List(CompletionList {
+                is_incomplete: true,
+                items,
+            })))
+        } else {
+            Ok(Some(CompletionResponse::Array(items)))
+        }
     }
 }

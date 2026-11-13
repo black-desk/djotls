@@ -63,3 +63,14 @@ pub fn source_range(text: &str, start: usize, end: usize) -> Range<usize> {
     }
     start..end
 }
+
+/// Encode literal display text without introducing Djot inline syntax.
+pub fn escape_inline_text(text: &str) -> String {
+    text.chars().fold(String::new(), |mut result, ch| {
+        if ch.is_ascii_punctuation() {
+            result.push('\\');
+        }
+        result.push(ch);
+        result
+    })
+}
