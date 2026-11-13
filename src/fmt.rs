@@ -580,7 +580,11 @@ impl<'a> FmtWriter<'a> {
                             if !self.pending_word.is_empty() {
                                 self.commit_word(false, out)?;
                             }
-                            self.wrap(out)?;
+                            // A trailing hard break already finished the line.
+                            // Do not add an empty line when closing the paragraph.
+                            if !self.pending_line.is_empty() {
+                                self.wrap(out)?;
+                            }
                             self.need_blankline = true;
                         }
                     }
