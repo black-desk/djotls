@@ -392,6 +392,11 @@ fn main() {
             "verbatim-line-whitespace",
             "> `a  \n> b\t c`\n\n- `a  \n  b\t c`\n",
         ),
+        ("math-backticks", include_str!("math-backticks.in")),
+        (
+            "math-line-whitespace",
+            "> $``a`b  \n> c\t d``\n\n- $$``a`b  \n  c\t d``\n",
+        ),
     ] {
         for width in [24, 72] {
             trials.push(Trial::test(

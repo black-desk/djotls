@@ -145,7 +145,7 @@ struct FmtWriter<'a> {
     // Track whether we need to emit the `{` for an inline attribute
     in_inline_attrs: bool,
 
-    // Buffer inline code so its delimiter can be chosen from its contents.
+    // Buffer inline code and math to choose delimiters from their contents.
     verbatim_text: Option<String>,
 
     // For code_block: track if we need to emit language
@@ -340,7 +340,11 @@ impl<'a> FmtWriter<'a> {
         }
     }
 
-    fn render_verbatim<W: std::fmt::Write>(&mut self, out: &mut W) -> std::fmt::Result {
+    fn render_verbatim<W: std::fmt::Write>(
+        &mut self,
+        prefix: &str,
+        out: &mut W,
+    ) -> std::fmt::Result {
         let text = self.verbatim_text.take().unwrap();
         // Match djot.js trimVerbatim: one space next to a boundary backtick
         // is delimiter padding, not part of the code contents.
@@ -359,6 +363,7 @@ impl<'a> FmtWriter<'a> {
             length += 1;
         }
         let ticks = "`".repeat(length);
+        self.push_word(prefix)?;
         self.push_word(&ticks)?;
         if text.starts_with('`') {
             self.push_word(" ")?;
@@ -1012,29 +1017,16 @@ impl<'a> FmtWriter<'a> {
                             self.push_word("]")?;
                         }
                     }
-                    "verbatim" => {
+                    "verbatim" | "inline_math" | "display_math" => {
                         if is_open {
                             self.verbatim_text = Some(String::new());
                         } else {
-                            self.render_verbatim(out)?;
-                        }
-                    }
-                    "inline_math" => {
-                        if is_open {
-                            self.push_word("$`")?;
-                            self.raw = true;
-                        } else {
-                            self.raw = false;
-                            self.push_word("`")?;
-                        }
-                    }
-                    "display_math" => {
-                        if is_open {
-                            self.push_word("$$`")?;
-                            self.raw = true;
-                        } else {
-                            self.raw = false;
-                            self.push_word("`")?;
+                            let prefix = match base_tag {
+                                "inline_math" => "$",
+                                "display_math" => "$$",
+                                _ => "",
+                            };
+                            self.render_verbatim(prefix, out)?;
                         }
                     }
                     "url" | "email" => {
