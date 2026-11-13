@@ -6,9 +6,9 @@
 
 {_This is {*strong within*} regular emphasis_}
 
-Not emphasized because of spaces: _ not emphasized _
+Not emphasized because of spaces: \_ not emphasized \_
 
-Not strong because of spaces: * not strong *
+Not strong because of spaces: \* not strong \*
 
 Curly braces force emphasis: {_ this is emphasized, despite the spaces!
 _}

@@ -1,8 +1,8 @@
-Inline math: $`E = mc^2`$
+Inline math: $`E = mc^2`\$
 
 Display math:
 
-$$`\int_0^1 x^2 dx`$
+$$`\int_0^1 x^2 dx`\$
 
 A raw inline block: `raw content`{=html}
 

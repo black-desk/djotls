@@ -177,6 +177,9 @@ struct FmtWriter<'a> {
     /// True while inside +destination … -destination (link URL).
     in_destination: bool,
 
+    /// Autolink contents are literal, just like link destinations.
+    in_autolink: bool,
+
     /// Buffer for accumulating reference definition URL parts.
     ref_def_url: String,
 }
@@ -210,6 +213,7 @@ impl<'a> FmtWriter<'a> {
             div_fences: Vec::new(),
             last_div_close: None,
             in_destination: false,
+            in_autolink: false,
             ref_def_url: String::new(),
         }
     }
@@ -585,9 +589,12 @@ impl<'a> FmtWriter<'a> {
     ) -> std::fmt::Result {
         log::trace!("Start fmt render events");
 
+        let mut previous_was_escape = false;
         for event in events {
             let event = &event;
             let annot = &event.annot;
+            let escaped = previous_was_escape;
+            previous_was_escape = annot == "escape";
             log::debug!("Event: {} {:?}", annot, self.src(event));
 
             if annot != "-div" {
@@ -1021,6 +1028,7 @@ impl<'a> FmtWriter<'a> {
                         }
                     }
                     "url" | "email" => {
+                        self.in_autolink = is_open;
                         if is_open {
                             self.push_word("<")?;
                         } else {
@@ -1095,12 +1103,45 @@ impl<'a> FmtWriter<'a> {
                                 self.apply_prefix();
                                 self.wrap(out)?;
                             }
-                        } else if self.code_block_need_lang {
-                            // This str after +code_block is the language
-                            // Actually language comes via code_language event, not str
-                            // Handle as normal str
-                            self.emit_str_words(&text, out)?;
                         } else {
+                            // Match upstream escaping so literal punctuation
+                            // cannot become syntax after escaping or wrapping.
+                            // Preserve existing source escapes and literal URL
+                            // contents; code and math use the branches above.
+                            let text = if self.in_destination || self.in_autolink {
+                                text
+                            } else {
+                                let mut encoded = String::new();
+                                let mut chars = text.chars().enumerate().peekable();
+                                while let Some((index, c)) = chars.next() {
+                                    let special = matches!(
+                                        c,
+                                        '~' | '`'
+                                            | '\''
+                                            | '"'
+                                            | '$'
+                                            | '{'
+                                            | '}'
+                                            | '['
+                                            | ']'
+                                            | '^'
+                                            | '<'
+                                            | '>'
+                                            | '\\'
+                                            | '*'
+                                            | '_'
+                                            | '|'
+                                    ) || matches!(
+                                        (c, chars.peek().map(|(_, next)| *next)),
+                                        ('-', Some('-')) | ('!', Some('[')) | ('.', Some('.'))
+                                    );
+                                    if special && !(index == 0 && escaped) {
+                                        encoded.push('\\');
+                                    }
+                                    encoded.push(c);
+                                }
+                                encoded
+                            };
                             self.emit_str_words(&text, out)?;
                         }
                     }
