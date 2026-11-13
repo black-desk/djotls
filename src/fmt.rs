@@ -276,11 +276,15 @@ impl<'a> FmtWriter<'a> {
     }
 
     fn wrap<W: std::fmt::Write>(&mut self, out: &mut W) -> std::fmt::Result {
+        self.wrap_line(false, out)
+    }
+
+    fn wrap_line<W: std::fmt::Write>(&mut self, literal: bool, out: &mut W) -> std::fmt::Result {
         log::trace!("Wrap");
         if self.table_data.is_some() {
             return Ok(());
         }
-        if self.code_fence.is_some() && !self.code_block_need_lang {
+        if literal || self.code_fence.is_some() && !self.code_block_need_lang {
             // Code whitespace is content, including trailing spaces and tabs.
             // Trim only an empty container prefix, not any code after it.
             let prefix: String = self.prefix.concat();
@@ -362,11 +366,14 @@ impl<'a> FmtWriter<'a> {
         for (index, line) in text.split('\n').enumerate() {
             if index > 0 {
                 if !self.pending_word.is_empty() {
-                    self.commit_word(true, out)?;
+                    self.commit_word(false, out)?;
                 }
-                self.wrap(out)?;
+                self.apply_prefix();
+                self.wrap_line(true, out)?;
             }
-            self.emit_str_words(line, out)?;
+            // Whitespace and line endings are code contents. Keep each source
+            // line indivisible, even when it exceeds the configured width.
+            self.push_word(line)?;
         }
         if text.ends_with('`') {
             self.push_word(" ")?;
