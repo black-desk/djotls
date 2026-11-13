@@ -128,6 +128,11 @@ The server supports:
 
 - Whole-document formatting, using the existing formatter.
 
+- Folding for heading sections and multiline code blocks, lists, list
+  items, quotations, divs, footnotes and tables. The first line remains
+  visible; trailing blank lines are excluded. Client line-only folding
+  and range limits are respected.
+
 - A hierarchical heading outline (a flat outline for clients that do not
   support hierarchical document symbols).
 
