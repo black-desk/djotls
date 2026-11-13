@@ -556,6 +556,13 @@ impl LanguageServer for Backend {
                         ..Default::default()
                     },
                 )),
+                code_action_provider: Some(CodeActionProviderCapability::Options(
+                    CodeActionOptions {
+                        code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+                        resolve_provider: Some(false),
+                        ..Default::default()
+                    },
+                )),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
@@ -1004,6 +1011,70 @@ impl LanguageServer for Backend {
                     .collect()
             })
             .transpose()
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        if params.context.only.as_ref().is_some_and(|kinds| {
+            !kinds.iter().any(|kind| {
+                let kind = kind.as_str();
+                kind.is_empty() || kind == "quickfix"
+            })
+        }) {
+            return Ok(Some(vec![]));
+        }
+        let uri = params.text_document.uri;
+        let (documents, open) = self.edit_context().await?;
+        let snapshot = open
+            .get(&uri)
+            .ok_or_else(|| Error::invalid_params("Document is not open"))?;
+        let doc = snapshot.doc.clone();
+        let selection = offset(&doc, params.range.start)?..offset(&doc, params.range.end)?;
+        if selection.start > selection.end {
+            return Err(Error::invalid_params("Reversed code action range"));
+        }
+        let source_uri = uri.clone();
+        let (doc, edits, diagnostics) = tokio::task::spawn_blocking(move || {
+            let mut resolver = Resolver::new(documents);
+            let edits = doc.remove_broken_links(source_uri.as_str(), selection, &mut resolver);
+            let diagnostics = link_diagnostics(&source_uri, &doc, &mut resolver);
+            (doc, edits, diagnostics)
+        })
+        .await
+        .map_err(|_| Error::internal_error())?;
+        self.check_snapshots(&open)?;
+        let mut actions = Vec::new();
+        for edit in edits {
+            let edit_range = range(&doc, edit.range.clone());
+            let related = diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.severity == Some(DiagnosticSeverity::ERROR)
+                        && diagnostic.range.start < edit_range.end
+                        && edit_range.start < diagnostic.range.end
+                })
+                .cloned()
+                .collect();
+            let files = HashMap::from([(
+                uri.as_str().to_owned(),
+                FileEdits {
+                    document: doc.clone(),
+                    edits: vec![edit],
+                },
+            )]);
+            actions.push(CodeAction {
+                title: "Remove broken link, keep text".into(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(related),
+                edit: Some(self.workspace_edit(files, &open, None)?),
+                ..Default::default()
+            });
+        }
+        Ok(Some(
+            actions
+                .into_iter()
+                .map(CodeActionOrCommand::CodeAction)
+                .collect(),
+        ))
     }
 
     async fn selection_range(

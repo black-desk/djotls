@@ -49,6 +49,7 @@ vim.lsp.config('djot', {
       vim.lsp.buf.format({ bufnr = bufnr, name = 'djot', async = false })
     end, 'Djot: format')
     map('<leader>ld', vim.diagnostic.open_float, 'Djot: diagnostics')
+    map('<leader>la', vim.lsp.buf.code_action, 'Djot: code actions')
   end,
 })
 vim.lsp.enable('djot')
@@ -127,6 +128,15 @@ this server.
 The server supports:
 
 - Whole-document formatting, using the existing formatter.
+
+- A quick fix to remove a confirmed broken ordinary link while keeping
+  its text and inline formatting. It applies to unresolved labels,
+  missing local files and missing anchors. Each action edits one link
+  use; shared definitions are retained. Literal punctuation is escaped
+  and a neutral span may be used to preserve parsing or attributes. No
+  action is offered for images, footnotes, external URLs, read failures,
+  or transformations whose parsed content cannot be preserved. Targets
+  are revalidated against disk and unsaved buffers when requested.
 
 - Selection ranges expand from a word through enclosing inline syntax,
   links, blocks, heading sections and the whole document. Multiple
