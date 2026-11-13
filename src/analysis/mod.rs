@@ -732,6 +732,24 @@ fn completion_context_in(
     } else {
         (CompletionKind::Template, tail, absolute, ']')
     };
+    // Choosing a complete-link candidate inside an existing link's display
+    // text must not leave its old destination behind. Empty template targets
+    // remain eligible because the whole placeholder can be replaced.
+    if kind == CompletionKind::Template
+        && spans.iter().any(|label| {
+            matches!(label.tag.as_str(), "linktext" | "imagetext")
+                && event_range(source, events, label.open).end == absolute + 1
+                && spans.iter().any(|target| {
+                    target.open == label.close + 1
+                        && (target.tag == "reference"
+                            || target.tag == "destination"
+                                && event_range(source, events, target.open).end
+                                    != event_range(source, events, target.close).start)
+                })
+        })
+    {
+        return None;
+    }
     if prefix.contains(['[', ']', '(', ')', '\r', '\n']) {
         return None;
     }
@@ -748,12 +766,11 @@ fn completion_context_in(
         offset + 3
     } else if kind == CompletionKind::Link && after.starts_with(')') {
         offset + 1
-    } else if kind == CompletionKind::Template {
-        if after.starts_with(']') {
-            offset + 1
-        } else {
-            offset
-        }
+    } else if kind == CompletionKind::Template
+        && replace_end > offset
+        && source[replace_end..].starts_with("()")
+    {
+        replace_end + 2
     } else {
         replace_end
     };

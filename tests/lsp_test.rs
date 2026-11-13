@@ -3864,3 +3864,54 @@ fn stdio_link_action_kinds_select_quickfix_or_refactoring() {
     }
     server.shutdown();
 }
+
+#[test]
+fn stdio_bracket_completion_replaces_remaining_label_and_avoids_existing_links() {
+    let mut server = Server::new(false);
+    for (source, marker, candidate, expected) in [
+        (
+            "# Guide\n\n[Guide] after",
+            "ide]",
+            "Guide (#Guide)",
+            "# Guide\n\n[Guide](#Guide) after",
+        ),
+        (
+            "# Guide\n\n[Guide]() after",
+            "ide]",
+            "Guide (#Guide)",
+            "# Guide\n\n[Guide](#Guide) after",
+        ),
+        (
+            "[guide]: url\n\n[guide]() after",
+            "ide]",
+            "guide",
+            "[guide]: url\n\n[guide][guide] after",
+        ),
+        (
+            "# Guide\n\n[text] after",
+            "text]",
+            "Guide (#Guide)",
+            "# Guide\n\n[Guide](#Guide) after",
+        ),
+    ] {
+        server.open(source);
+        let cursor = source.rfind(marker).unwrap();
+        let items = complete_uri(&mut server, "file:///test.dj", source, cursor);
+        let item = items
+            .iter()
+            .find(|item| item["label"] == candidate)
+            .unwrap();
+        assert_eq!(apply_edit(source, &item["textEdit"]), expected);
+    }
+    for link in ["[Guide](manual.dj)", "[Guide][ref]", "![Guide](image.png)"] {
+        let source = format!("# Guide\n\n{link}");
+        server.open(&source);
+        let result = server.query(
+            "textDocument/completion",
+            &source,
+            source.rfind("ide]").unwrap(),
+        );
+        assert!(result.is_null(), "{source}: {result}");
+    }
+    server.shutdown();
+}

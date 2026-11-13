@@ -281,6 +281,9 @@ The server supports:
   fetched or validated.
 
 Completion suppresses suggestions in code, math and parsed attributes.
+Opening-bracket completion replaces the remaining bracket text and an
+empty `()` template destination. It is suppressed inside existing link
+or image text when a destination or reference label is already present.
 Reference completions replace an existing closing bracket and can remove
 empty inline-link punctuation left by a link template. Destination
 completion requests are triggered by `(`, `/` and `#`; clients may also
