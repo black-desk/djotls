@@ -10,6 +10,7 @@ pub mod links;
 pub mod moves;
 pub mod references;
 pub mod rename;
+pub mod structure;
 pub mod text;
 use crate::parser::{parse_events, Event};
 use std::{

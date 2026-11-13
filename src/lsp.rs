@@ -46,6 +46,8 @@ pub struct Backend {
     watch_files: AtomicBool,
     snippets: AtomicBool,
     nested_symbols: AtomicBool,
+    line_folding: AtomicBool,
+    fold_limit: RwLock<Option<u32>>,
     versioned_edits: AtomicBool,
     file_rename_edits: AtomicBool,
 }
@@ -60,6 +62,8 @@ impl Backend {
             watch_files: AtomicBool::new(false),
             snippets: AtomicBool::new(false),
             nested_symbols: AtomicBool::new(false),
+            line_folding: AtomicBool::new(false),
+            fold_limit: RwLock::new(None),
             versioned_edits: AtomicBool::new(false),
             file_rename_edits: AtomicBool::new(false),
         }
@@ -535,6 +539,12 @@ impl LanguageServer for Backend {
                 .unwrap_or(false),
             Ordering::Relaxed,
         );
+        let folding = text.and_then(|t| t.folding_range.as_ref());
+        self.line_folding.store(
+            folding.and_then(|f| f.line_folding_only).unwrap_or(false),
+            Ordering::Relaxed,
+        );
+        *self.fold_limit.write().unwrap() = folding.and_then(|f| f.range_limit);
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 position_encoding: Some(PositionEncodingKind::UTF16),
@@ -546,6 +556,7 @@ impl LanguageServer for Backend {
                         ..Default::default()
                     },
                 )),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
@@ -992,6 +1003,33 @@ impl LanguageServer for Backend {
                     .collect()
             })
             .transpose()
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        let snapshot = self.snapshot(&params.text_document.uri)?;
+        let doc = &snapshot.doc;
+        let line_only = self.line_folding.load(Ordering::Relaxed);
+        let mut folds: Vec<_> = doc
+            .folding_ranges()
+            .into_iter()
+            .map(|bytes| {
+                let start = position(doc, bytes.start);
+                let end = position(doc, bytes.end);
+                FoldingRange {
+                    start_line: start.line,
+                    start_character: (!line_only).then_some(start.character),
+                    end_line: end.line,
+                    end_character: (!line_only).then_some(end.character),
+                    kind: Some(FoldingRangeKind::Region),
+                    collapsed_text: None,
+                }
+            })
+            .collect();
+        folds.dedup();
+        if let Some(limit) = *self.fold_limit.read().unwrap() {
+            folds.truncate(limit as usize);
+        }
+        Ok(Some(folds))
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {

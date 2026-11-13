@@ -92,6 +92,7 @@ impl Server {
         }
         let result = server.request("initialize", initialization);
         assert_eq!(result["capabilities"]["workspaceSymbolProvider"], true);
+        assert_eq!(result["capabilities"]["foldingRangeProvider"], true);
         for operation in ["willRename", "didRename"] {
             let supported =
                 overrides["capabilities"]["workspace"]["fileOperations"][operation] == true;
@@ -3393,5 +3394,47 @@ fn stdio_non_file_reference_queries_and_local_renames_use_utf16_ranges() {
     assert!(response.get("error").is_none(), "{response}");
     let applied = apply_workspace_edit(&response["result"], &[(uri, source)]);
     assert_eq!(applied[uri], source.replace("旧😀", "新😀"));
+    server.shutdown();
+}
+
+#[test]
+fn stdio_folding_sections_and_nested_blocks() {
+    let source = "# 第一章\r\n\r\ntext\r\n\r\n## Child\r\n\r\n> quote\r\n> more\r\n\r\n- first\r\n  continuation\r\n- second\r\n\r\n```\r\ncode\r\n```\r\n\r\n# Next\r\n";
+    let mut server = Server::new(false);
+    server.open(source);
+    let folds = server.document("textDocument/foldingRange");
+    let pairs: Vec<_> = folds
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|fold| {
+            (
+                fold["startLine"].as_u64().unwrap(),
+                fold["endLine"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    for expected in [(0, 15), (4, 15), (6, 7), (9, 11), (9, 10), (13, 15)] {
+        assert!(pairs.contains(&expected), "missing {expected:?}: {folds}");
+    }
+    assert!(!pairs.iter().any(|(start, _)| *start == 17));
+    server.notify("textDocument/didChange", json!({"textDocument":{"uri":"file:///test.dj","version":2},"contentChanges":[{"text":"# Alone"}]}));
+    assert_eq!(server.document("textDocument/foldingRange"), json!([]));
+    server.shutdown();
+
+    let mut server = Server::start_with_init(
+        false,
+        true,
+        None,
+        None,
+        json!({"capabilities":{"textDocument":{"foldingRange":{"lineFoldingOnly":true,"rangeLimit":2}}}}),
+    );
+    server.open(source);
+    let folds = server.document("textDocument/foldingRange");
+    assert_eq!(folds.as_array().unwrap().len(), 2);
+    for fold in folds.as_array().unwrap() {
+        assert!(fold.get("startCharacter").is_none());
+        assert!(fold.get("endCharacter").is_none());
+    }
     server.shutdown();
 }
