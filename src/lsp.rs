@@ -556,6 +556,7 @@ impl LanguageServer for Backend {
                         ..Default::default()
                     },
                 )),
+                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
@@ -1003,6 +1004,34 @@ impl LanguageServer for Backend {
                     .collect()
             })
             .transpose()
+    }
+
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> Result<Option<Vec<SelectionRange>>> {
+        let snapshot = self.snapshot(&params.text_document.uri)?;
+        let doc = &snapshot.doc;
+        let offsets = params
+            .positions
+            .into_iter()
+            .map(|p| offset(doc, p))
+            .collect::<Result<Vec<_>>>()?;
+        let result = doc
+            .selection_ranges(&offsets)
+            .into_iter()
+            .map(|chain| {
+                let mut parent = None;
+                for bytes in chain.into_iter().rev() {
+                    parent = Some(Box::new(SelectionRange {
+                        range: range(doc, bytes),
+                        parent,
+                    }));
+                }
+                *parent.unwrap()
+            })
+            .collect();
+        Ok(Some(result))
     }
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
