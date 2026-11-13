@@ -34,7 +34,7 @@ the same machine.
 
 The following historical measurements predate the current block-index
 snapshots. They are context for the optimization, not current memory
-budgets. For one x86_64 Linux release run on 2026-10-18 (Rust
+budgets. For one x86\_64 Linux release run on 2026-10-18 (Rust
 `1.99.0-nightly (1ed2df61a 2026-08-04)`), the probe reported:
 
 | Documents | Source (MiB) | Indexed RSS (MiB) | Queries only (MiB) | After edits (MiB) | Saved (MiB) | All buffers closed (MiB) |
@@ -94,7 +94,7 @@ runtime and Git indexing metadata are excluded. Peak accounting does not
 include internal implementation details of the underlying allocator'}s
 `realloc`.
 
-Before switching snapshot events to a boxed slice, one x86_64 release
+Before switching snapshot events to a boxed slice, one x86\_64 release
 run produced the following results. File measurements refer to their
 content at the time of this run, before adding this section.
 

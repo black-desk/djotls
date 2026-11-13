@@ -47,6 +47,10 @@ djotfmt --help
 djotls --help
 ```
 
+Formatting escapes literal syntax punctuation in ordinary text so line
+wrapping preserves its meaning. Links, attributes and code keep their
+own syntax.
+
 ## Language server
 
 The `djotls` executable provides formatting, navigation, references,
