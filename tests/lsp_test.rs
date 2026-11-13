@@ -93,6 +93,7 @@ impl Server {
         let result = server.request("initialize", initialization);
         assert_eq!(result["capabilities"]["workspaceSymbolProvider"], true);
         assert_eq!(result["capabilities"]["foldingRangeProvider"], true);
+        assert_eq!(result["capabilities"]["selectionRangeProvider"], true);
         for operation in ["willRename", "didRename"] {
             let supported =
                 overrides["capabilities"]["workspace"]["fileOperations"][operation] == true;
@@ -3436,5 +3437,60 @@ fn stdio_folding_sections_and_nested_blocks() {
         assert!(fold.get("startCharacter").is_none());
         assert!(fold.get("endCharacter").is_none());
     }
+    server.shutdown();
+}
+
+#[test]
+fn stdio_selection_ranges_expand_syntax_with_utf16_and_multiple_positions() {
+    let source = "# Main\r\n\r\n## Child\r\n\r\n😀 [中文 *bold*](#Main) tail\r\n\r\n# Next\r\n";
+    let mut server = Server::new(false);
+    server.open(source);
+    let positions = [
+        source.find("中文").unwrap(),
+        source.find("bold").unwrap() + 1,
+        source.len(),
+    ];
+    let result = server.request("textDocument/selectionRange", json!({"textDocument":{"uri":"file:///test.dj"},"positions":positions.map(|p| source_position(source, p))}));
+    let mut chains = Vec::new();
+    for (i, item) in result.as_array().unwrap().iter().enumerate() {
+        let mut node = item;
+        let mut chain = Vec::new();
+        let mut previous: Option<(usize, usize)> = None;
+        loop {
+            let start = source_offset(source, &node["range"]["start"]);
+            let end = source_offset(source, &node["range"]["end"]);
+            assert!(start <= positions[i] && positions[i] <= end);
+            if let Some((a, b)) = previous {
+                assert!(start <= a && end >= b && (start, end) != (a, b));
+            }
+            previous = Some((start, end));
+            chain.push(&source[start..end]);
+            let Some(parent) = node.get("parent") else {
+                break;
+            };
+            node = parent;
+        }
+        assert_eq!(chain.last(), Some(&source));
+        chains.push(chain);
+    }
+    assert_eq!(chains[0][0], "中文");
+    assert!(chains[0].contains(&"[中文 *bold*](#Main)"));
+    assert!(chains[0].iter().any(|s| s.starts_with("## Child")));
+    assert_eq!(chains[1][0], "bold");
+    assert!(chains[1].contains(&"*bold*"));
+    let invalid = server.response(
+        "textDocument/selectionRange",
+        json!({"textDocument":{"uri":"file:///test.dj"},"positions":[{"line":4,"character":1}]}),
+    );
+    assert_eq!(invalid["error"]["code"], -32602);
+    server.notify("textDocument/didChange", json!({"textDocument":{"uri":"file:///test.dj","version":2},"contentChanges":[{"text":""}]}));
+    let result = server.request(
+        "textDocument/selectionRange",
+        json!({"textDocument":{"uri":"file:///test.dj"},"positions":[{"line":0,"character":0}]}),
+    );
+    assert_eq!(
+        result,
+        json!([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}}])
+    );
     server.shutdown();
 }

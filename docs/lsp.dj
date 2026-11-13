@@ -128,6 +128,10 @@ The server supports:
 
 - Whole-document formatting, using the existing formatter.
 
+- Selection ranges expand from a word through enclosing inline syntax,
+  links, blocks, heading sections and the whole document. Multiple
+  cursors are supported.
+
 - Folding for heading sections and multiline code blocks, lists, list
   items, quotations, divs, footnotes and tables. The first line remains
   visible; trailing blank lines are excluded. Client line-only folding
