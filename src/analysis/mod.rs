@@ -6,6 +6,7 @@
 //! Completion reparses a local block rather than retaining the event stream.
 //! Ranges are half-open UTF-8 byte offsets.
 
+pub mod actions;
 pub mod links;
 pub mod moves;
 pub mod references;

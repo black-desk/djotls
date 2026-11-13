@@ -94,6 +94,10 @@ impl Server {
         assert_eq!(result["capabilities"]["workspaceSymbolProvider"], true);
         assert_eq!(result["capabilities"]["foldingRangeProvider"], true);
         assert_eq!(result["capabilities"]["selectionRangeProvider"], true);
+        assert_eq!(
+            result["capabilities"]["codeActionProvider"]["codeActionKinds"],
+            json!(["quickfix"])
+        );
         for operation in ["willRename", "didRename"] {
             let supported =
                 overrides["capabilities"]["workspace"]["fileOperations"][operation] == true;
@@ -3491,6 +3495,147 @@ fn stdio_selection_ranges_expand_syntax_with_utf16_and_multiple_positions() {
     assert_eq!(
         result,
         json!([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}}])
+    );
+    server.shutdown();
+}
+
+fn broken_link_actions(
+    server: &mut Server,
+    uri: &str,
+    source: &str,
+    start: usize,
+    end: usize,
+) -> Value {
+    server.request("textDocument/codeAction", json!({"textDocument":{"uri":uri},"range":{"start":source_position(source, start),"end":source_position(source, end)},"context":{"diagnostics":[]}}))
+}
+
+#[test]
+fn stdio_remove_broken_link_preserves_text_syntax_and_shared_definitions() {
+    for (i, (source, expected)) in [
+        ("😀 [中文](#missing)", "😀 中文"),
+        ("[text][missing]", "text"),
+        ("[missing][]", "missing"),
+        ("[# heading](#missing)", "\\# heading"),
+        ("[1. item](#missing)", "1\\. item"),
+        (
+            "[x \\[y\\] *bold* `a  b` $`x`](#missing)",
+            "x \\[y\\] *bold* `a  b` $`x`",
+        ),
+        ("[text](#missing){#keep .class}", "[text]{#keep .class}"),
+        (
+            "[a][bad] [b][bad]\n\n[bad]: #missing\n",
+            "a [b][bad]\n\n[bad]: #missing\n",
+        ),
+        ("*[a *bold*](#missing)*", "*a *bold**"),
+        ("[](#missing)", "[]{}"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut server = Server::new(false);
+        server.open(source);
+        let cursor = source.find('[').unwrap() + 1;
+        let actions = broken_link_actions(&mut server, "file:///test.dj", source, cursor, cursor);
+        assert_eq!(actions.as_array().unwrap().len(), 1, "case {i}: {actions}");
+        assert_eq!(actions[0]["kind"], "quickfix");
+        assert!(!actions[0]["diagnostics"].as_array().unwrap().is_empty());
+        let result = apply_workspace_edit(&actions[0]["edit"], &[("file:///test.dj", source)]);
+        assert_eq!(result["file:///test.dj"], expected, "case {i}");
+        server.shutdown();
+    }
+}
+
+#[test]
+fn stdio_broken_link_actions_exclude_images_footnotes_valid_and_unavailable_targets() {
+    let mut server = Server::new(false);
+    let source = "# Good\n\n![alt](#missing) [^missing] [ok](#Good) [web](https://example.invalid)\n\n[bad](#missing)";
+    server.open(source);
+    let actions = broken_link_actions(&mut server, "file:///test.dj", source, 0, source.len());
+    assert_eq!(actions.as_array().unwrap().len(), 1, "{actions}");
+    assert_eq!(
+        range_text(
+            source,
+            &actions[0]["edit"]["changes"]["file:///test.dj"][0]["range"]
+        ),
+        "[bad](#missing)"
+    );
+    let result = server.request("textDocument/codeAction", json!({"textDocument":{"uri":"file:///test.dj"},"range":{"start":{"line":4,"character":1},"end":{"line":4,"character":1}},"context":{"diagnostics":[],"only":["refactor"]}}));
+    assert_eq!(result, json!([]));
+    // No syntax guessing in incomplete links or code.
+    for (i, source) in [
+        "[incomplete](",
+        "`[x](#missing)`",
+        "```\n[x](#missing)\n```",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        server.notify("textDocument/didChange", json!({"textDocument":{"uri":"file:///test.dj","version":i+2},"contentChanges":[{"text":source}]}));
+        assert_eq!(
+            broken_link_actions(&mut server, "file:///test.dj", source, 0, source.len()),
+            json!([])
+        );
+    }
+    server.shutdown();
+
+    let repo = Repository::new();
+    repo.write("broken.dj", "not readable Djot");
+    std::fs::write(repo.0.join("broken.dj"), [0xff]).unwrap();
+    let uri = repo.uri("source.dj");
+    let source = "[x](broken.dj#anchor) [y](missing.dj)";
+    let mut server = Server::new(false);
+    server.notify(
+        "textDocument/didOpen",
+        json!({"textDocument":{"uri":uri,"languageId":"djot","version":1,"text":source}}),
+    );
+    let actions = broken_link_actions(&mut server, &uri, source, 0, source.len());
+    assert_eq!(actions.as_array().unwrap().len(), 1, "{actions}");
+    let edits = &actions[0]["edit"]["changes"][&uri];
+    assert_eq!(range_text(source, &edits[0]["range"]), "[y](missing.dj)");
+    server.shutdown();
+}
+
+#[test]
+fn stdio_broken_link_actions_revalidate_targets_and_version_edits() {
+    let repo = Repository::new();
+    repo.write("target.dj", "# Existing\n");
+    let uri = repo.uri("source.dj");
+    let target_uri = repo.uri("target.dj");
+    let source = "[lost](target.dj#Missing) [valid](target.dj#Existing)";
+    let mut server = Server::start_with_init(
+        false,
+        true,
+        None,
+        None,
+        json!({"capabilities":{"workspace":{"workspaceEdit":{"documentChanges":true}}}}),
+    );
+    server.notify(
+        "textDocument/didOpen",
+        json!({"textDocument":{"uri":uri,"languageId":"djot","version":7,"text":source}}),
+    );
+    let actions = broken_link_actions(&mut server, &uri, source, 0, source.len());
+    assert_eq!(actions.as_array().unwrap().len(), 1);
+    let edit = &actions[0]["edit"]["documentChanges"][0];
+    assert_eq!(edit["textDocument"]["version"], 7);
+    assert_eq!(
+        range_text(source, &edit["edits"][0]["range"]),
+        "[lost](target.dj#Missing)"
+    );
+    // A newly opened unsaved target replaces disk state, even with stale
+    // diagnostics in the request context (the server validates independently).
+    server.notify("textDocument/didOpen", json!({"textDocument":{"uri":target_uri,"languageId":"djot","version":1,"text":"# Missing\n"}}));
+    let actions = broken_link_actions(&mut server, &uri, source, 0, source.len());
+    assert_eq!(actions.as_array().unwrap().len(), 1);
+    let edit = &actions[0]["edit"]["documentChanges"][0];
+    assert_eq!(
+        range_text(source, &edit["edits"][0]["range"]),
+        "[valid](target.dj#Existing)"
+    );
+    // Empty selection at the end of a link must not offer that link's action.
+    let end = source.find(") ").unwrap() + 1;
+    assert_eq!(
+        broken_link_actions(&mut server, &uri, source, end, end),
+        json!([])
     );
     server.shutdown();
 }
