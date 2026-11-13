@@ -37,3 +37,9 @@
 | x          | y     |
 
 After table.
+
++ [ ] | c | d |
+      |---|---|
+      | y | z |
+
++ [x] Another task.
