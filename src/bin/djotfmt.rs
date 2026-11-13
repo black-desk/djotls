@@ -33,7 +33,15 @@ fn main() -> std::io::Result<()> {
 
                 log::trace!("Writing to swap file {}", swap.display());
 
-                &mut std::fs::File::create_new(swap).expect("Swapping file already exists")
+                let mut options = std::fs::OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    // Keep private input contents private while writing too.
+                    options.mode(0o600);
+                }
+                &mut options.open(swap).expect("Cannot create swap file")
             }
         };
 
@@ -56,6 +64,8 @@ fn main() -> std::io::Result<()> {
 
         let swap = file.with_extension("djotfmt.swp");
         assert!(swap.exists(), "Swap file does not exist");
+        // Copy permissions after writing, which can clear special mode bits.
+        std::fs::set_permissions(&swap, std::fs::metadata(&file)?.permissions())?;
 
         log::trace!(
             "Renaming swap file {} to {}",
