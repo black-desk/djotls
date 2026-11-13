@@ -51,8 +51,8 @@ Formatting escapes literal syntax punctuation in ordinary text so line
 wrapping preserves its meaning. Links, attributes and code keep their
 own syntax.
 
-Inline code preserves spaces, tabs and line endings. Long code spans can
-exceed the configured line width.
+Inline code and math preserve spaces, tabs and line endings. Long spans
+can exceed the configured line width.
 
 ## Language server
 
