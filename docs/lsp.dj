@@ -305,6 +305,9 @@ workspace folders and refreshes diagnostics. A buffer already opened at
 the destination takes precedence over a migrated snapshot. Index
 overlays treat equivalent encoded file URIs as the same file.
 
+Symbol rename also treats equivalent encoded file URIs as the same file
+and preserves the URI and version of an open target buffer.
+
 The client'}s file manager must send `willRenameFiles`, apply the
 returned edits, perform the move and send `didRenameFiles` (when
 advertised). A terminal `mv` or file-watch notification alone cannot

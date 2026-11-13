@@ -33,6 +33,17 @@ pub struct Resolver {
     documents: HashMap<Url, Arc<Document>>,
 }
 
+/// File identity is independent of percent-encoding in a client URI.
+pub(crate) fn same_document(left: &str, right: &str) -> bool {
+    match (Url::parse(left), Url::parse(right)) {
+        (Ok(left), Ok(right)) => match (left.to_file_path(), right.to_file_path()) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left == right,
+        },
+        _ => left == right,
+    }
+}
+
 impl Resolver {
     pub fn new(documents: impl IntoIterator<Item = (String, Arc<Document>)>) -> Self {
         let mut files = HashMap::new();

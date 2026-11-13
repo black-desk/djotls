@@ -1957,6 +1957,77 @@ fn stdio_rename_from_encoded_fragment_uses_unsaved_buffers_and_versions() {
 }
 
 #[test]
+fn stdio_rename_equivalent_encoded_uris_preserves_buffers_and_incoming_links() {
+    for (name, buffer_name, destination) in [
+        ("guide.dj", "%67uide.dj", "guide.dj"),
+        ("guide(x).dj", "guide(x).dj", "guide%28x%29.dj"),
+        ("guide(x).dj", "guide%28x%29.dj", "guide(x).dj"),
+    ] {
+        for versioned in [false, true] {
+            for from_fragment in [false, true] {
+                let repo = Repository::new();
+                repo.write(name, "# Disk\n");
+                let target = "# Unsaved\n\n[Unsaved][] [self](#Unsaved)\n";
+                let source = format!("[link]({destination}#Unsaved)\n");
+                repo.write("links.dj", &source);
+                let target_uri = repo.uri(name).replace(name, buffer_name);
+                let source_uri = repo.uri("links.dj");
+                let mut server = Server::start_with_init(
+                    true,
+                    true,
+                    None,
+                    Some(json!([repo.folder("")])),
+                    json!({"capabilities":{"workspace":{"workspaceEdit":{"documentChanges":versioned}}}}),
+                );
+                for (uri, text, version) in
+                    [(&target_uri, target, 7), (&source_uri, source.as_str(), 11)]
+                {
+                    server.notify("textDocument/didOpen", json!({"textDocument":{"uri":uri,"languageId":"djot","version":version,"text":text}}));
+                    assert_eq!(server.diagnostics_for(uri)["diagnostics"], json!([]));
+                }
+                let (uri, text, at) = if from_fragment {
+                    (&source_uri, source.as_str(), source.find('#').unwrap() + 1)
+                } else {
+                    (&target_uri, target, 2)
+                };
+                assert_eq!(
+                    prepare_rename(&mut server, uri, text, at)["placeholder"],
+                    "Unsaved"
+                );
+                let response = rename_request(&mut server, uri, text, at, "New");
+                assert!(response.get("error").is_none(), "{response}");
+                let edit = &response["result"];
+                if versioned {
+                    let files = edit["documentChanges"].as_array().unwrap();
+                    assert_eq!(files.len(), 2, "{edit}");
+                    for file in files {
+                        let uri = &file["textDocument"]["uri"];
+                        assert!(uri == &target_uri || uri == &source_uri, "{file}");
+                        assert_eq!(
+                            file["textDocument"]["version"],
+                            if uri == &target_uri { 7 } else { 11 }
+                        );
+                    }
+                }
+                let updated =
+                    apply_workspace_edit(edit, &[(&target_uri, target), (&source_uri, &source)]);
+                assert_eq!(updated.len(), 2, "{edit}");
+                assert_eq!(
+                    updated[&target_uri],
+                    "# New\n\n[Unsaved][New] [self](#New)\n"
+                );
+                assert_eq!(updated[&source_uri], format!("[link]({destination}#New)\n"));
+                assert_eq!(
+                    std::fs::read_to_string(repo.0.join(name)).unwrap(),
+                    "# Disk\n"
+                );
+                server.shutdown();
+            }
+        }
+    }
+}
+
+#[test]
 fn stdio_rename_link_to_ignored_target_and_inline_id() {
     let repo = Repository::new();
     repo.write(".gitignore", "ignored.dj\n");
