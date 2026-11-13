@@ -290,7 +290,7 @@ impl<'a> FmtWriter<'a> {
                 out.write_str(&self.pending_line)?;
             }
         } else {
-            out.write_str(self.pending_line.trim_end())?;
+            out.write_str(self.pending_line.trim_end_matches([' ', '\t', '\r', '\n']))?;
         }
         out.write_str("\n")?;
         self.pending_line.clear();
@@ -748,7 +748,9 @@ impl<'a> FmtWriter<'a> {
                             let content = std::mem::take(&mut self.pending_line);
                             self.table_data.as_mut().unwrap().current_row_cells.push(
                                 TableCellData {
-                                    content: content.trim_end().to_string(),
+                                    content: content
+                                        .trim_end_matches([' ', '\t', '\r', '\n'])
+                                        .to_string(),
                                 },
                             );
                             self.pending_line.clear();
@@ -1463,7 +1465,8 @@ impl<'a> FmtWriter<'a> {
 
         let mut space = false;
         for char in text.chars() {
-            if !char.is_whitespace() {
+            // Unicode spaces such as U+00A0 are text, not Djot break points.
+            if !matches!(char, ' ' | '\t' | '\r' | '\n') {
                 space = false;
                 self.push_word(char.to_string().as_str())?;
                 continue;
