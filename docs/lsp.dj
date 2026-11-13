@@ -230,21 +230,28 @@ The server supports:
 - Completion for link labels after `[text][`, footnotes after `[^`, and
   anchors after `[text](#`.
 
-- Workspace heading completion after `[text](`. Current-document
-  headings sort before headings in other files. Completion inserts
-  `#anchor` for the current file and a URI relative to the current
-  document'}s directory for other files, including the explicit or
-  generated heading anchor. Titles and destination prefixes can filter
-  candidates. Existing closing parentheses are replaced, and destination
-  paths and anchors are encoded as needed. Open target buffers
-  contribute their unsaved headings. Percent-encoded same-document
-  anchors resolve for definition navigation and reference diagnostics.
+- Workspace heading completion after `[text](`. The server suggests
+  current-document headings before headings in other files. Completion
+  inserts `#anchor` for the current file and a URI relative to the
+  current document'}s directory for other files, including the explicit
+  or generated heading anchor. Titles and destination prefixes can
+  filter candidates. Existing closing parentheses are replaced, and
+  destination paths and anchors are encoded as needed. Open target
+  buffers contribute their unsaved headings. Percent-encoded
+  same-document anchors resolve for definition navigation and reference
+  diagnostics.
 
-- Inline-link and reference-link templates after `[`. Accept a candidate
-  to insert it; this does not automatically insert text without
-  acceptance. Snippet-capable clients can move between the text and
-  destination fields. Clients without snippet support receive plain
-  text.
+- Workspace headings, current-document reference labels and link
+  templates after `[`. The suggested order puts current-document
+  candidates before headings in other files, with templates last. Typing
+  a title or path filters heading candidates. Selecting a heading
+  inserts a complete inline link with its title as editable display text
+  and its existing anchor as the destination. Relative destinations and
+  unsaved target headings follow the same rules as destination
+  completion. Literal title punctuation is escaped. Accept a candidate
+  to insert it; nothing is inserted without acceptance. Snippet-capable
+  clients can edit the display text or move between template fields.
+  Clients without snippet support receive plain text.
 
 - Standard document links for direct links, reference links, images and
   reference-definition destinations. Relative paths resolve against the
@@ -266,8 +273,17 @@ Completion suppresses suggestions in code, math and parsed attributes.
 Reference completions replace an existing closing bracket and can remove
 empty inline-link punctuation left by a link template. Destination
 completion requests are triggered by `(`, `/` and `#`; clients may also
-request completion manually. Destination completion lists are marked
+request completion manually. Opening-bracket and destination completion
+lists are marked
 incomplete so clients can requery while typing title or path prefixes.
+
+Completion ordering is a server suggestion, expressed through the
+returned list order and LSP `sortText`. Clients may rank candidates by
+fuzzy-match scores or other preferences before consulting `sortText`, so
+the final menu need not keep current-document candidates first. With
+Neovim'}s built-in completion, `:set completeopt+=nosort` retains fuzzy
+filtering while preserving the supplied order when `fuzzy` is enabled.
+Completion plugins have their own sorting settings.
 
 Formatting defaults to 72 columns. Clients can pass a positive integer
 `maxColumns` in formatting options to change it. The LSP indentation

@@ -729,10 +729,8 @@ fn completion_context_in(
         (CompletionKind::Footnote, prefix, absolute + 2, ']')
     } else if bracket > 0 && before.as_bytes()[bracket - 1] == b']' {
         (CompletionKind::Link, tail, absolute + 1, ']')
-    } else if tail.is_empty() {
-        (CompletionKind::Template, tail, absolute, ']')
     } else {
-        return None;
+        (CompletionKind::Template, tail, absolute, ']')
     };
     if prefix.contains(['[', ']', '(', ')', '\r', '\n']) {
         return None;

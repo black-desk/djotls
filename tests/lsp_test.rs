@@ -275,7 +275,7 @@ fn completion_snippets_and_plain_text_fallback() {
         let mut server = Server::new(snippets);
         server.open("[");
         let items = server.at("textDocument/completion", 0, 1);
-        let item = &items[0];
+        let item = &items["items"][0];
         assert_eq!(item["label"], "Inline link");
         assert_eq!(item["insertTextFormat"], if snippets { 2 } else { 1 });
         assert_eq!(
@@ -643,6 +643,8 @@ fn stdio_completion_context_and_applied_replacement_edits() {
         };
         let result = server.query("textDocument/completion", &source, at);
         let item = result
+            .get("items")
+            .unwrap_or(&result)
             .as_array()
             .unwrap()
             .iter()
@@ -3638,4 +3640,105 @@ fn stdio_broken_link_actions_revalidate_targets_and_version_edits() {
         json!([])
     );
     server.shutdown();
+}
+
+#[test]
+fn stdio_open_bracket_completion_lists_workspace_and_local_references_first() {
+    let repo = Repository::new();
+    repo.write("docs/remote.dj", "# ARemote\n\n# Shared\n\n# Shared\n");
+    let source = "# ZLocal\n\n[label]: https://example.com\n\n😀 []() trailing";
+    repo.write("docs/current.dj", source);
+    let uri = repo.uri("docs/current.dj");
+    let mut server = Server::start(false, true, None, Some(json!([repo.folder("")])));
+    open_uri(&mut server, &uri, source);
+    let at = source.find("[]()").unwrap() + 1;
+    let items = complete_uri(&mut server, &uri, source, at);
+    let local = items
+        .iter()
+        .position(|item| item["detail"] == "#ZLocal")
+        .unwrap();
+    let remote = items
+        .iter()
+        .position(|item| item["detail"] == "remote.dj#ARemote")
+        .unwrap();
+    let reference = items
+        .iter()
+        .position(|item| item["label"] == "label")
+        .unwrap();
+    let template = items
+        .iter()
+        .position(|item| item["label"] == "Inline link")
+        .unwrap();
+    assert!(
+        local < remote && reference < remote && remote < template,
+        "{items:?}"
+    );
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item["label"].as_str().unwrap().starts_with("Shared ("))
+            .count(),
+        2
+    );
+    assert_eq!(
+        apply_edit(source, &items[remote]["textEdit"]),
+        source.replace("[]()", "[ARemote](remote.dj#ARemote)")
+    );
+    assert_eq!(
+        apply_edit(source, &items[reference]["textEdit"]),
+        source.replace("[]()", "[label][label]")
+    );
+    for (typed, destination) in [("[Loc", "#ZLocal"), ("[remote.dj#AR", "remote.dj#ARemote")] {
+        let source = format!("# ZLocal\n\n{typed}] after");
+        open_uri(&mut server, &uri, &source);
+        let items = complete_uri(&mut server, &uri, &source, source.find("] after").unwrap());
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(items[0]["detail"], destination);
+    }
+    // Open unsaved buffers contribute their current headings.
+    open_uri(
+        &mut server,
+        &repo.uri("docs/remote.dj"),
+        "{#edited}\n# Unsaved\n",
+    );
+    open_uri(&mut server, &uri, "[");
+    let items = complete_uri(&mut server, &uri, "[", 1);
+    assert!(items
+        .iter()
+        .any(|item| item["detail"] == "remote.dj#edited"));
+    assert!(!items
+        .iter()
+        .any(|item| item["detail"] == "remote.dj#ARemote"));
+    server.shutdown();
+}
+
+#[test]
+fn stdio_open_bracket_completion_escapes_titles_and_snippet_fields() {
+    let repo = Repository::new();
+    repo.write("my file.dj", "{#anchor}\n# A \\[B\\] \\$ \\}\n");
+    let uri = repo.uri("current.dj");
+    for snippets in [false, true] {
+        let mut server = Server::start(snippets, true, None, Some(json!([repo.folder("")])));
+        open_uri(&mut server, &uri, "[");
+        let items = complete_uri(&mut server, &uri, "[", 1);
+        let item = items
+            .iter()
+            .find(|item| item["detail"] == "my%20file.dj#anchor")
+            .unwrap();
+        assert_eq!(item["insertTextFormat"], if snippets { 2 } else { 1 });
+        assert_eq!(
+            item["textEdit"]["newText"],
+            if snippets {
+                "[${1:A \\\\[B\\\\] \\\\\\$ \\\\\\}}](my%20file.dj#anchor)$0"
+            } else {
+                "[A \\[B\\] \\$ \\}](my%20file.dj#anchor)"
+            }
+        );
+        for source in ["\\[", "`[`,", "$`[`", "word{key=\"[\"}", "```\n["] {
+            open_uri(&mut server, &uri, source);
+            let result = server.request("textDocument/completion", json!({"textDocument":{"uri":uri},"position":source_position(source, source.find('[').unwrap()+1)}));
+            assert!(result.is_null(), "{source}: {result}");
+        }
+        server.shutdown();
+    }
 }
