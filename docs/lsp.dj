@@ -129,6 +129,17 @@ The server supports:
 
 - Whole-document formatting, using the existing formatter.
 
+- A `refactor.rewrite` action to convert an ordinary inline link into a
+  reference link. It preserves display text, inline formatting,
+  attributes and the target address. An effective existing definition
+  with the same address is reused; otherwise a definition is appended
+  using the document line endings. Labels use the heading-anchor naming
+  rules, adding `-1`, `-2` and so on only on collision. Existing labels,
+  implicit heading labels and unresolved reference labels are reserved.
+  Reanalysis checks that existing bindings and heading anchors remain
+  unchanged; unsafe transformations are omitted. Images and existing
+  reference links are excluded.
+
 - A quick fix to remove a confirmed broken ordinary link while keeping
   its text and inline formatting. It applies to unresolved labels,
   missing local files and missing anchors. Each action edits one link
