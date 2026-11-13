@@ -673,15 +673,17 @@ impl<'a> FmtWriter<'a> {
                         if is_open {
                             self.blankline(out)?;
                             self.apply_prefix();
+                            // Keep source markers for task items too: changing
+                            // their bullet can merge otherwise separate lists.
+                            let marker = self.src(event);
+                            self.push_raw(&marker)?;
+                            self.push_raw(" ")?;
                             if !self.list_task_stack.last().copied().unwrap_or(false) {
                                 // Keep the source marker. Ordered-list annotations
                                 // describe style, not start, and later items can
                                 // resolve an ambiguous Roman/alphabetic style.
                                 // Reconstructing markers eagerly loses either
                                 // the ordinal or that disambiguating evidence.
-                                let marker = self.src(event);
-                                self.push_raw(&marker)?;
-                                self.push_raw(" ")?;
                                 self.prefix.push(" ".repeat(marker.width() + 1));
                                 self.list_item_start = true;
                             }
@@ -1231,13 +1233,13 @@ impl<'a> FmtWriter<'a> {
                     }
                     "checkbox_checked" => {
                         self.apply_prefix();
-                        self.push_raw("- [x] ")?;
+                        self.push_raw("[x] ")?;
                         self.prefix.push("      ".to_string());
                         self.list_item_start = true;
                     }
                     "checkbox_unchecked" => {
                         self.apply_prefix();
-                        self.push_raw("- [ ] ")?;
+                        self.push_raw("[ ] ")?;
                         self.prefix.push("      ".to_string());
                         self.list_item_start = true;
                     }

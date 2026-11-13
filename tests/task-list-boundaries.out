@@ -3,3 +3,9 @@
 + [ ] bar
 
 * [ ] baz
+
+- [x] done foo
+
++ [x] done bar
+
+* [x] done baz

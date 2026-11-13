@@ -1,3 +1,7 @@
 - [ ] foo
 + [ ] bar
 * [ ] baz
+
+- [x] done foo
++ [X] done bar
+* [x] done baz
