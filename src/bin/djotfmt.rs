@@ -5,7 +5,7 @@
 #[path = "../cli.rs"]
 mod cli;
 
-fn main() -> std::io::Result<()> {
+fn main() -> std::process::ExitCode {
     use clap::Parser;
     let matches = cli::Cli::parse();
 
@@ -20,8 +20,34 @@ fn main() -> std::io::Result<()> {
 
     log::trace!("CLI options: {:?}", matches);
 
+    match run(matches) {
+        Ok(true) => std::process::ExitCode::SUCCESS,
+        Ok(false) => std::process::ExitCode::from(1),
+        Err(error) => {
+            eprintln!("djotfmt: {error}");
+            std::process::ExitCode::from(2)
+        }
+    }
+}
+
+fn run(matches: cli::Cli) -> std::io::Result<bool> {
+    let mut formatted = true;
+
     for file in matches.input {
         log::trace!("Processing file: {}", file.display());
+
+        let input = std::fs::read_to_string(&file)?;
+        let config = djotls::fmt::FmtConfig {
+            max_cols: matches.columns,
+        };
+        let result = djotls::fmt::format(&input, &config);
+        if matches.check {
+            if result != input {
+                eprintln!("Needs formatting: {}", file.display());
+                formatted = false;
+            }
+            continue;
+        }
 
         let output: &mut dyn std::io::Write = match matches.inplace {
             false => {
@@ -41,19 +67,12 @@ fn main() -> std::io::Result<()> {
                     // Keep private input contents private while writing too.
                     options.mode(0o600);
                 }
-                &mut options.open(swap).expect("Cannot create swap file")
+                &mut options.open(swap)?
             }
         };
 
         log::trace!("Start render file");
 
-        let input = std::fs::read_to_string(file.clone())?;
-
-        let config = djotls::fmt::FmtConfig {
-            max_cols: matches.columns,
-        };
-
-        let result = djotls::fmt::format(&input, &config);
         output.write_all(result.as_bytes())?;
 
         log::trace!("File rendered");
@@ -76,5 +95,5 @@ fn main() -> std::io::Result<()> {
         std::fs::rename(file.with_extension("djotfmt.swp"), file)?;
     }
 
-    Ok(())
+    Ok(formatted)
 }

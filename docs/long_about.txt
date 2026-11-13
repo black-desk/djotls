@@ -5,3 +5,8 @@ writes the result to the standard output. If INPUT(s) are given, it reformats
 the files. If -i is specified together with INPUT(s), the files are edited
 in-place. Otherwise, the result is written to the standard output.
 In-place edits preserve the original file permissions.
+
+With --check, no formatted output is written and files are not changed.
+Exit status: 0 if formatted, 1 if formatting is needed, 2 on error.
+Paths needing formatting are reported on standard error. --check conflicts
+with -i and uses the configured column limit.
