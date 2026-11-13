@@ -1,0 +1,15 @@
+{ % @columns: 24 % }
+
+foo![icon](x)
+
+![a](x)![b](y)
+
+{*foo![icon](x)*}
+
+(foo![icon](x))
+
+foo ![icon](x)
+
+foo![icon][img]
+
+[img]: icon.png

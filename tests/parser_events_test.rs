@@ -401,6 +401,11 @@ fn main() {
             "heading-literal-hashes",
             include_str!("heading-literal-hashes-24.in"),
         ),
+        ("image-adjacency", include_str!("image-adjacency.in")),
+        (
+            "image-wrapping",
+            "Some words before foo![icon](asset.png) and after.\n\n[![image](img)](url)\n",
+        ),
     ] {
         for width in [24, 72] {
             trials.push(Trial::test(

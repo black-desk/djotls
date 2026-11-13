@@ -1249,15 +1249,8 @@ impl<'a> FmtWriter<'a> {
                         self.list_item_start = true;
                     }
                     "image_marker" => {
-                        if !self.pending_word.is_empty() {
-                            // Commit the preceding word. If it's a punctuation
-                            // marker like "[" from linktext, don't add trailing
-                            // space — "![" should follow immediately. Otherwise
-                            // add space (normal word separation).
-                            let space =
-                                !matches!(self.pending_word.as_str(), "[" | "(" | "![" | "\"");
-                            self.commit_word(space, out)?;
-                        }
+                        // Source whitespace already commits the preceding word.
+                        // Without it, the image stays attached to that word.
                         self.push_word("!")?;
                     }
                     "open_marker" => {
