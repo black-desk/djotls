@@ -53,52 +53,6 @@ fn build_byte_to_utf16_map(input: &str) -> Vec<usize> {
     map
 }
 
-/// Parse a .test file and extract input for each test case.
-/// Format: test cases are delimited by ``` lines, input/output separated by `.`.
-fn parse_test_file(content: &str) -> Vec<String> {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut cases = Vec::new();
-    let mut idx = 0;
-
-    while idx < lines.len() {
-        // Find opening ```
-        while idx < lines.len() && !lines[idx].starts_with("```") {
-            idx += 1;
-        }
-        if idx >= lines.len() {
-            break;
-        }
-        idx += 1;
-
-        // Read input until `.` or `!` on its own line
-        let mut input = String::new();
-        while idx < lines.len() {
-            let line = lines[idx];
-            if line == "." || line == "!" {
-                break;
-            }
-            input.push_str(line);
-            input.push('\n');
-            idx += 1;
-        }
-        if idx < lines.len() {
-            idx += 1; // skip the `.` or `!` line
-        }
-
-        // Skip output until closing ```
-        while idx < lines.len() && !lines[idx].starts_with("```") {
-            idx += 1;
-        }
-        if idx < lines.len() {
-            idx += 1; // skip closing ```
-        }
-
-        cases.push(input);
-    }
-
-    cases
-}
-
 /// Run `djot --to events` on the given input and return raw stdout.
 fn get_djot_js_output(input: &str) -> Result<String, String> {
     use std::io::Write;
@@ -398,7 +352,6 @@ fn main() {
         libtest_mimic::run(&args, vec![]).exit();
     }
 
-    let test_dir = std::path::Path::new("third_party/djot.js/test");
     let mut trials = Vec::new();
 
     for (name, input) in [
@@ -503,27 +456,11 @@ fn main() {
         ));
     }
 
-    let entries: Vec<_> = glob::glob(test_dir.join("*.test").to_str().unwrap())
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .collect();
-
-    for entry in &entries {
-        let file_name = entry.file_name().unwrap().to_str().unwrap().to_string();
-        let content = std::fs::read_to_string(entry).unwrap();
-        let cases = parse_test_file(&content);
-
-        for (case_idx, input) in cases.into_iter().enumerate() {
-            let name = format!("{}::case_{}", file_name, case_idx);
-            let test_file = file_name.clone();
-            trials.push(Trial::test(name, move || {
-                run_parser_event_test(&test_file, case_idx, &input)
-            }));
-        }
-    }
-
-    if trials.is_empty() {
-        eprintln!("No test cases found in {}", test_dir.display());
+    for (file_name, index, input) in common::upstream_test_cases() {
+        trials.push(Trial::test(
+            format!("{file_name}::case_{index}"),
+            move || run_parser_event_test(&file_name, index, &input),
+        ));
     }
 
     // Also test integration .in/.out files

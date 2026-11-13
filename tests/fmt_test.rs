@@ -78,6 +78,17 @@ fn run_idempotent_test(path: std::path::PathBuf) -> Result<(), Failed> {
     Ok(())
 }
 
+fn run_upstream_idempotent_test(input: &str, max_cols: usize) -> Result<(), Failed> {
+    let config = djotls::fmt::FmtConfig { max_cols };
+    let formatted = djotls::fmt::format(input, &config);
+    let reformatted = djotls::fmt::format(&formatted, &config);
+    assert_eq!(
+        reformatted, formatted,
+        "upstream formatter idempotency failed at {max_cols} columns; input: {input:?}"
+    );
+    Ok(())
+}
+
 fn main() {
     let args = Arguments::from_args();
     let mut trials = Vec::new();
@@ -103,8 +114,6 @@ fn main() {
             .unwrap()
             .to_string();
 
-        // All tests pass — no skips needed
-
         trials.push(Trial::test(format!("fmt::{}", name), move || {
             run_format_test(input_path, expected_path)
         }));
@@ -120,6 +129,18 @@ fn main() {
         let name = format!("fmt::idempotent::{}", stem);
 
         trials.push(Trial::test(name, move || run_idempotent_test(path)));
+    }
+
+    // These checks need only the fixture sources, not Node.js or the reference
+    // AST: formatting an arbitrary input once must produce a fixed point.
+    for (file_name, index, input) in common::upstream_test_cases() {
+        for max_cols in [24, 72] {
+            let input = input.clone();
+            trials.push(Trial::test(
+                format!("fmt::upstream::idempotent::{file_name}::case_{index}::{max_cols}"),
+                move || run_upstream_idempotent_test(&input, max_cols),
+            ));
+        }
     }
 
     let documents = common::discover_documents();
