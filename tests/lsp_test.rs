@@ -96,7 +96,7 @@ impl Server {
         assert_eq!(result["capabilities"]["selectionRangeProvider"], true);
         assert_eq!(
             result["capabilities"]["codeActionProvider"]["codeActionKinds"],
-            json!(["quickfix"])
+            json!(["quickfix", "refactor.rewrite"])
         );
         for operation in ["willRename", "didRename"] {
             let supported =
@@ -3508,7 +3508,7 @@ fn broken_link_actions(
     start: usize,
     end: usize,
 ) -> Value {
-    server.request("textDocument/codeAction", json!({"textDocument":{"uri":uri},"range":{"start":source_position(source, start),"end":source_position(source, end)},"context":{"diagnostics":[]}}))
+    server.request("textDocument/codeAction", json!({"textDocument":{"uri":uri},"range":{"start":source_position(source, start),"end":source_position(source, end)},"context":{"diagnostics":[],"only":["quickfix"]}}))
 }
 
 #[test]
@@ -3561,7 +3561,7 @@ fn stdio_broken_link_actions_exclude_images_footnotes_valid_and_unavailable_targ
         ),
         "[bad](#missing)"
     );
-    let result = server.request("textDocument/codeAction", json!({"textDocument":{"uri":"file:///test.dj"},"range":{"start":{"line":4,"character":1},"end":{"line":4,"character":1}},"context":{"diagnostics":[],"only":["refactor"]}}));
+    let result = server.request("textDocument/codeAction", json!({"textDocument":{"uri":"file:///test.dj"},"range":{"start":{"line":4,"character":1},"end":{"line":4,"character":1}},"context":{"diagnostics":[],"only":["refactor.extract"]}}));
     assert_eq!(result, json!([]));
     // No syntax guessing in incomplete links or code.
     for (i, source) in [
@@ -3741,4 +3741,126 @@ fn stdio_open_bracket_completion_escapes_titles_and_snippet_fields() {
         }
         server.shutdown();
     }
+}
+
+fn inline_reference_actions(server: &mut Server, source: &str, cursor: usize) -> Value {
+    server.request("textDocument/codeAction", json!({"textDocument":{"uri":"file:///test.dj"},"range":{"start":source_position(source, cursor),"end":source_position(source, cursor)},"context":{"diagnostics":[],"only":["refactor"]}}))
+}
+
+#[test]
+fn stdio_inline_to_reference_generates_labels_without_unnecessary_suffixes() {
+    for (source, expected) in [
+        ("[安装说明](docs/guide.dj#安装)", "[安装说明][安装说明]\n\n[安装说明]: docs/guide.dj#安装\n"),
+        ("[some *bold* text](https://example.com/a?x=1#part)", "[some *bold* text][some-bold-text]\n\n[some-bold-text]: https://example.com/a?x=1#part\n"),
+        ("[A](#target){.style}", "[A][A]{.style}\n\n[A]: #target\n"),
+        ("[](url)", "[][s-1]\n\n[s-1]: url\n"),
+        ("# A\n\n[A][] [A](url)", "# A\n\n[A][] [A][A-1]\n\n[A-1]: url\n"),
+        ("[A][A-1]\n\n[A]: other\n\n[A](url)", "[A][A-1]\n\n[A]: other\n\n[A][A-2]\n\n[A-2]: url\n"),
+        ("😀 [中 文](a%20b.dj?x=1#part)\r\n", "😀 [中 文][中-文]\r\n\r\n[中-文]: a%20b.dj?x=1#part\r\n"),
+        ("[A](url)\n\n", "[A][A]\n\n[A]: url\n"),
+        ("[A](foo\\(bar\\))", "[A][A]\n\n[A]: foo(bar)\n"),
+    ] {
+        let mut server = Server::new(false);
+        server.open(source);
+        let cursor = source.rfind("](").unwrap() + 2;
+        let actions = inline_reference_actions(&mut server, source, cursor);
+        assert_eq!(actions.as_array().unwrap().len(), 1, "{source}: {actions}");
+        assert_eq!(actions[0]["kind"], "refactor.rewrite");
+        let result = apply_workspace_edit(&actions[0]["edit"], &[("file:///test.dj", source)]);
+        assert_eq!(result["file:///test.dj"], expected, "{source}");
+        open_uri(&mut server, "file:///test.dj", expected);
+        // The new reference use has a real, resolvable local definition.
+        let at = expected.rfind("][").unwrap() + 2;
+        let definition = server.query("textDocument/definition", expected, at);
+        assert_eq!(definition["uri"], "file:///test.dj");
+        server.shutdown();
+    }
+}
+
+#[test]
+fn stdio_inline_to_reference_reuses_only_effective_matching_definitions() {
+    for (source, expected) in [
+        (
+            "[existing]: url\n\n[display](url)",
+            "[existing]: url\n\n[display][existing]",
+        ),
+        (
+            "[same]: other\n[same]: url\n\n[display](url)",
+            "[same]: other\n[same]: url\n\n[display][same]",
+        ),
+        (
+            "[same]: url\n[same]: other\n\n[display](url)",
+            "[same]: url\n[same]: other\n\n[display][display]\n\n[display]: url\n",
+        ),
+        (
+            "[A](url) [^A]\n\n[^A]: footnote\n",
+            "[A][A] [^A]\n\n[^A]: footnote\n\n[A]: url\n",
+        ),
+    ] {
+        let mut server = Server::new(false);
+        server.open(source);
+        let cursor = source.find("](").unwrap() + 2;
+        let actions = inline_reference_actions(&mut server, source, cursor);
+        assert_eq!(actions.as_array().unwrap().len(), 1, "{source}: {actions}");
+        let result = apply_workspace_edit(&actions[0]["edit"], &[("file:///test.dj", source)]);
+        assert_eq!(result["file:///test.dj"], expected);
+        server.shutdown();
+    }
+}
+
+#[test]
+fn stdio_inline_to_reference_excludes_non_inline_links_and_versions_edits() {
+    let mut server = Server::start_with_init(
+        false,
+        true,
+        None,
+        None,
+        json!({"capabilities":{"workspace":{"workspaceEdit":{"documentChanges":true}}}}),
+    );
+    let source = "[A](https://example.com)";
+    server.open(source);
+    let actions = inline_reference_actions(&mut server, source, 2);
+    assert_eq!(
+        actions[0]["edit"]["documentChanges"][0]["textDocument"]["version"],
+        1
+    );
+    for (i, source) in [
+        "![alt](url)",
+        "[text][ref]\n\n[ref]: url",
+        "`[text](url)`",
+        "[^note]",
+        "[text](",
+        "[A](url)\n\n```\nunclosed",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        server.notify("textDocument/didChange", json!({"textDocument":{"uri":"file:///test.dj","version":i+2},"contentChanges":[{"text":source}]}));
+        let cursor = source.find('[').unwrap() + 1;
+        assert_eq!(
+            inline_reference_actions(&mut server, source, cursor),
+            json!([]),
+            "{source}"
+        );
+    }
+    server.shutdown();
+}
+
+#[test]
+fn stdio_link_action_kinds_select_quickfix_or_refactoring() {
+    let mut server = Server::new(false);
+    let source = "[A](#missing)";
+    server.open(source);
+    let position = source_position(source, 2);
+    let params = json!({"textDocument":{"uri":"file:///test.dj"},"range":{"start":position,"end":position},"context":{"diagnostics":[]}});
+    let actions = server.request("textDocument/codeAction", params.clone());
+    assert_eq!(actions.as_array().unwrap().len(), 2);
+    for kind in ["quickfix", "refactor.rewrite"] {
+        let mut params = params.clone();
+        params["context"]["only"] = json!([kind]);
+        let actions = server.request("textDocument/codeAction", params);
+        assert_eq!(actions.as_array().unwrap().len(), 1);
+        assert_eq!(actions[0]["kind"], kind);
+    }
+    server.shutdown();
 }

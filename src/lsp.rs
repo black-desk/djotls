@@ -558,7 +558,10 @@ impl LanguageServer for Backend {
                 )),
                 code_action_provider: Some(CodeActionProviderCapability::Options(
                     CodeActionOptions {
-                        code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+                        code_action_kinds: Some(vec![
+                            CodeActionKind::QUICKFIX,
+                            CodeActionKind::REFACTOR_REWRITE,
+                        ]),
                         resolve_provider: Some(false),
                         ..Default::default()
                     },
@@ -1014,12 +1017,18 @@ impl LanguageServer for Backend {
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        if params.context.only.as_ref().is_some_and(|kinds| {
-            !kinds.iter().any(|kind| {
-                let kind = kind.as_str();
-                kind.is_empty() || kind == "quickfix"
+        let requested = |kind: &str| {
+            params.context.only.as_ref().is_none_or(|kinds| {
+                kinds.iter().any(|parent| {
+                    parent.as_str().is_empty()
+                        || kind == parent.as_str()
+                        || kind.starts_with(&format!("{}.", parent.as_str()))
+                })
             })
-        }) {
+        };
+        let quickfix = requested("quickfix");
+        let rewrite = requested("refactor.rewrite");
+        if !quickfix && !rewrite {
             return Ok(Some(vec![]));
         }
         let uri = params.text_document.uri;
@@ -1033,11 +1042,24 @@ impl LanguageServer for Backend {
             return Err(Error::invalid_params("Reversed code action range"));
         }
         let source_uri = uri.clone();
-        let (doc, edits, diagnostics) = tokio::task::spawn_blocking(move || {
+        let (doc, edits, conversions, diagnostics) = tokio::task::spawn_blocking(move || {
             let mut resolver = Resolver::new(documents);
-            let edits = doc.remove_broken_links(source_uri.as_str(), selection, &mut resolver);
-            let diagnostics = link_diagnostics(&source_uri, &doc, &mut resolver);
-            (doc, edits, diagnostics)
+            let edits = if quickfix {
+                doc.remove_broken_links(source_uri.as_str(), selection.clone(), &mut resolver)
+            } else {
+                vec![]
+            };
+            let conversions = if rewrite {
+                doc.inline_links_to_references(selection)
+            } else {
+                vec![]
+            };
+            let diagnostics = if quickfix {
+                link_diagnostics(&source_uri, &doc, &mut resolver)
+            } else {
+                vec![]
+            };
+            (doc, edits, conversions, diagnostics)
         })
         .await
         .map_err(|_| Error::internal_error())?;
@@ -1065,6 +1087,21 @@ impl LanguageServer for Backend {
                 title: "Remove broken link, keep text".into(),
                 kind: Some(CodeActionKind::QUICKFIX),
                 diagnostics: Some(related),
+                edit: Some(self.workspace_edit(files, &open, None)?),
+                ..Default::default()
+            });
+        }
+        for edits in conversions {
+            let files = HashMap::from([(
+                uri.as_str().to_owned(),
+                FileEdits {
+                    document: doc.clone(),
+                    edits,
+                },
+            )]);
+            actions.push(CodeAction {
+                title: "Convert inline link to reference link".into(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
                 edit: Some(self.workspace_edit(files, &open, None)?),
                 ..Default::default()
             });
