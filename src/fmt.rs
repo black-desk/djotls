@@ -378,25 +378,17 @@ impl<'a> FmtWriter<'a> {
     // Attribute rendering helpers
     // -----------------------------------------------------------------------
 
-    fn render_attr<W: std::fmt::Write>(
-        &mut self,
-        attr: &AttrState,
-        out: &mut W,
-    ) -> std::fmt::Result {
-        if attr.parts.is_empty() {
-            return Ok(());
-        }
+    fn attr_words(attr: &AttrState) -> Vec<String> {
+        let mut words = Vec::new();
         let mut i = 0;
         while i < attr.parts.len() {
             let (kind, val) = &attr.parts[i];
             match kind {
                 AttrKind::Class => {
-                    self.push_word(&format!(".{}", val))?;
-                    self.commit_word(true, out)?;
+                    words.push(format!(".{}", val));
                 }
                 AttrKind::Id => {
-                    self.push_word(&format!("#{}", val))?;
-                    self.commit_word(true, out)?;
+                    words.push(format!("#{}", val));
                 }
                 AttrKind::Key => {
                     // Combine Key with the following Value (if present)
@@ -413,37 +405,43 @@ impl<'a> FmtWriter<'a> {
                                 .chars()
                                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '-'));
                         if needs_quotes {
-                            self.push_word(&format!("{}=\"{}\"", val, v))?;
+                            words.push(format!("{}=\"{}\"", val, v));
                         } else {
-                            self.push_word(&format!("{}={}", val, v))?;
+                            words.push(format!("{}={}", val, v));
                         }
-                        self.commit_word(true, out)?;
                         i += 1; // skip the Value part we just consumed
                     } else {
-                        self.push_word(&format!("{}=", val))?;
-                        self.commit_word(true, out)?;
+                        words.push(format!("{}=", val));
                     }
                 }
                 AttrKind::Value => {
                     // Orphan value (no preceding Key)
-                    self.push_word(val)?;
-                    self.commit_word(true, out)?;
+                    words.push(val.clone());
                 }
                 AttrKind::Comment => {
                     // Split comment content into individual words
                     // so long comments can wrap naturally.
                     let trimmed = val.trim();
-                    self.push_word("%")?;
-                    self.commit_word(true, out)?;
+                    words.push("%".to_string());
                     for word in trimmed.split_whitespace() {
-                        self.push_word(word)?;
-                        self.commit_word(true, out)?;
+                        words.push(word.to_string());
                     }
-                    self.push_word("%")?;
-                    self.commit_word(true, out)?;
+                    words.push("%".to_string());
                 }
             }
             i += 1;
+        }
+        words
+    }
+
+    fn render_attr<W: std::fmt::Write>(
+        &mut self,
+        attr: &AttrState,
+        out: &mut W,
+    ) -> std::fmt::Result {
+        for word in Self::attr_words(attr) {
+            self.push_word(&word)?;
+            self.commit_word(true, out)?;
         }
         Ok(())
     }
@@ -590,7 +588,8 @@ impl<'a> FmtWriter<'a> {
         log::trace!("Start fmt render events");
 
         let mut previous_was_escape = false;
-        for event in events {
+        let mut events = events.into_iter().peekable();
+        while let Some(event) = events.next() {
             let event = &event;
             let annot = &event.annot;
             let escaped = previous_was_escape;
@@ -1041,18 +1040,34 @@ impl<'a> FmtWriter<'a> {
                             self.attr.reset();
                         } else {
                             // Render accumulated inline attributes.
-                            // If there's a pending word, the attribute attaches to it:
-                            // commit the word without trailing space, then no space
-                            // before {.
-                            // If pending_word is empty, the preceding text ended with
-                            // a space (e.g. standalone comment): keep the space before {.
-                            if !self.pending_word.is_empty() {
-                                self.commit_word(false, out)?;
-                                self.space_after_pending_word = false;
+                            let attr_snapshot = self.attr.clone();
+                            // An inner span's attribute is immediately followed
+                            // by the outer span's ]{. Reserve those two columns
+                            // when the short inner element can fit on one line.
+                            if events.peek().is_some_and(|next| next.annot == "-span")
+                                && self.space_after_pending_word
+                                && !self.pending_word.is_empty()
+                                && !self.pending_line.is_empty()
+                                && !self.no_wrap
+                            {
+                                let width = self.pending_word.width()
+                                    + Self::attr_words(&attr_snapshot)
+                                        .iter()
+                                        .map(|word| word.width() + 1)
+                                        .sum::<usize>()
+                                    + 5; // {, space, }, then ]{
+                                if width <= self.max_cols
+                                    && self.pending_line.width() + 1 + width > self.max_cols
+                                {
+                                    self.wrap(out)?;
+                                }
                             }
+                            // Keep the opener in the preceding word so wrapping
+                            // cannot separate an element from its attributes.
+                            // An empty word still preserves preceding whitespace
+                            // for standalone comments.
                             self.push_word("{")?;
                             self.commit_word(true, out)?;
-                            let attr_snapshot = self.attr.clone();
                             self.render_attr(&attr_snapshot, out)?;
                             self.push_word("}")?;
                             self.attr.reset();
