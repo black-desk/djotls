@@ -661,6 +661,7 @@ impl<'a> FmtWriter<'a> {
                             }
                             self.wrap(out)?;
                             self.prefix.pop();
+                            self.heading_level = 0;
                             self.need_blankline = true;
                         }
                     }
@@ -1132,6 +1133,8 @@ impl<'a> FmtWriter<'a> {
                                 let mut encoded = String::new();
                                 let mut chars = text.chars().enumerate().peekable();
                                 while let Some((index, c)) = chars.next() {
+                                    // A wrapped hash run in heading text can
+                                    // become a continuation marker and disappear.
                                     let special = matches!(
                                         c,
                                         '~' | '`'
@@ -1149,10 +1152,11 @@ impl<'a> FmtWriter<'a> {
                                             | '*'
                                             | '_'
                                             | '|'
-                                    ) || matches!(
-                                        (c, chars.peek().map(|(_, next)| *next)),
-                                        ('-', Some('-')) | ('!', Some('[')) | ('.', Some('.'))
-                                    );
+                                    ) || (c == '#' && self.heading_level > 0)
+                                        || matches!(
+                                            (c, chars.peek().map(|(_, next)| *next)),
+                                            ('-', Some('-')) | ('!', Some('[')) | ('.', Some('.'))
+                                        );
                                     if special && !(index == 0 && escaped) {
                                         encoded.push('\\');
                                     }

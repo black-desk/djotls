@@ -397,6 +397,10 @@ fn main() {
             "math-line-whitespace",
             "> $``a`b  \n> c\t d``\n\n- $$``a`b  \n  c\t d``\n",
         ),
+        (
+            "heading-literal-hashes",
+            include_str!("heading-literal-hashes-24.in"),
+        ),
     ] {
         for width in [24, 72] {
             trials.push(Trial::test(
