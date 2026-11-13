@@ -1,0 +1,3 @@
+{ % @columns: 24 % }
+
+[nested [span]{.blue}]{#ident}
