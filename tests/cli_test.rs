@@ -44,3 +44,72 @@ fn inplace_formatting_preserves_file_permissions() {
         }
     }
 }
+
+#[test]
+fn check_stdin_exit_codes_width_and_conflicting_options() {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    for (source, args, code) in [
+        ("word word\n", vec!["--check"], 0),
+        ("word   word\n", vec!["--check"], 1),
+        ("word word\n", vec!["--check", "-c", "4"], 1),
+        ("word\n", vec!["--check", "-i"], 2),
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_djotfmt"))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // clap can reject conflicting arguments before reading stdin.
+        let _ = child.stdin.take().unwrap().write_all(source.as_bytes());
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(code), "{output:?}");
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn check_reports_all_unformatted_files_without_writing() {
+    use std::{fs, process::Command};
+    let dir = std::env::temp_dir().join(format!("djotfmt-check-{}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let paths: Vec<_> = ["clean.dj", "first.dj", "second.dj"]
+        .map(|name| dir.join(name))
+        .into();
+    for (i, path) in paths.iter().enumerate() {
+        fs::write(
+            path,
+            if i == 0 {
+                "word word\n"
+            } else {
+                "word   word\n"
+            },
+        )
+        .unwrap();
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_djotfmt"))
+        .arg("--check")
+        .args(&paths)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let errors = String::from_utf8(output.stderr).unwrap();
+    assert!(!errors.contains("clean.dj"));
+    for path in &paths[1..] {
+        assert!(errors.contains(path.to_str().unwrap()));
+        assert_eq!(fs::read_to_string(path).unwrap(), "word   word\n");
+        assert!(!path.with_extension("djotfmt.swp").exists());
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_djotfmt"))
+        .arg("--check")
+        .arg(dir.join("missing.dj"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    fs::remove_dir_all(dir).unwrap();
+}

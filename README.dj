@@ -54,6 +54,14 @@ own syntax.
 Inline code and math preserve spaces, tabs and line endings. Long spans
 can exceed the configured line width.
 
+Use `djotfmt --check file.dj` to check formatting without changing
+files.
+The exit status is 0 when formatted, 1 when formatting is needed, and 2
+for an execution error. Multiple inputs and `-c` work in check mode;
+`--check` cannot be combined with `-i`. With no input, it checks
+standard
+input. Paths needing formatting are reported on standard error.
+
 ## Language server
 
 The `djotls` executable provides formatting, navigation, references,

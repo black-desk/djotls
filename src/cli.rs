@@ -20,6 +20,13 @@ pub struct Cli {
     #[clap(short, help = "Inplace edit <file>s")]
     pub inplace: bool,
 
+    #[arg(
+        long,
+        conflicts_with = "inplace",
+        help = "Check formatting without changing files"
+    )]
+    pub check: bool,
+
     #[clap(
         short,
         help = "Set the maximum number of allowed columns",
