@@ -50,6 +50,14 @@ Add regression tests for behavior changes. Formatter fixtures pair
 for idempotency. Add `{ % @columns: N % }` to an input to set its test
 width (default 72).
 
+When input and expected output are identical, make `.out` a relative
+symbolic link to `.in`.
+
+All upstream djot.js test inputs are also formatted at 24 and 72
+columns. Each result must be unchanged by a second formatting pass.
+These checks require the submodule sources but do not need Node.js or
+npm. Missing upstream fixtures fail the formatter test suite.
+
 Opt-in memory probes are described in [memory measurement](
 docs/memory.dj).
 
