@@ -21,7 +21,9 @@ jobs:
     steps:
       - uses: black-desk/workflows/generic@master
         env:
-          CLEAN_IGNORE: "*.in"
+          # This expected output intentionally keeps a trailing U+00A0.
+          # Retain whitespace linting for all other output fixtures.
+          CLEAN_IGNORE: "*.in:tests/literal-nonbreaking-space.out"
 
   format:
     runs-on: ubuntu-latest
