@@ -1,0 +1,7 @@
+{ % @columns: 24 % }
+
+\[foo\]:
+http://example.com
+{"title"}
+
+[foo][]
