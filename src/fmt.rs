@@ -145,8 +145,8 @@ struct FmtWriter<'a> {
     // Track whether we need to emit the `{` for an inline attribute
     in_inline_attrs: bool,
 
-    // Verbatim opening backtick sequence (for matching close)
-    verbatim_ticks: String,
+    // Buffer inline code so its delimiter can be chosen from its contents.
+    verbatim_text: Option<String>,
 
     // For code_block: track if we need to emit language
     code_block_need_lang: bool,
@@ -199,7 +199,7 @@ impl<'a> FmtWriter<'a> {
             attr: AttrState::new(),
             in_block_attrs: false,
             in_inline_attrs: false,
-            verbatim_ticks: String::new(),
+            verbatim_text: None,
             code_block_need_lang: false,
             code_fence: None,
             heading_level: 0,
@@ -330,6 +330,44 @@ impl<'a> FmtWriter<'a> {
         } else {
             String::new()
         }
+    }
+
+    fn render_verbatim<W: std::fmt::Write>(&mut self, out: &mut W) -> std::fmt::Result {
+        let text = self.verbatim_text.take().unwrap();
+        // Match djot.js trimVerbatim: one space next to a boundary backtick
+        // is delimiter padding, not part of the code contents.
+        let text = if text.starts_with(" `") {
+            &text[1..]
+        } else {
+            &text
+        };
+        let text = if text.ends_with("` ") {
+            &text[..text.len() - 1]
+        } else {
+            text
+        };
+        let mut length = 1;
+        while text.split(|c| c != '`').any(|run| run.len() == length) {
+            length += 1;
+        }
+        let ticks = "`".repeat(length);
+        self.push_word(&ticks)?;
+        if text.starts_with('`') {
+            self.push_word(" ")?;
+        }
+        for (index, line) in text.split('\n').enumerate() {
+            if index > 0 {
+                if !self.pending_word.is_empty() {
+                    self.commit_word(true, out)?;
+                }
+                self.wrap(out)?;
+            }
+            self.emit_str_words(line, out)?;
+        }
+        if text.ends_with('`') {
+            self.push_word(" ")?;
+        }
+        self.push_word(&ticks)
     }
 
     // -----------------------------------------------------------------------
@@ -959,15 +997,9 @@ impl<'a> FmtWriter<'a> {
                     }
                     "verbatim" => {
                         if is_open {
-                            // Extract opening backtick sequence from source
-                            let src = self.src(event);
-                            let ticks: String = src.chars().take_while(|c| *c == '`').collect();
-                            self.verbatim_ticks = ticks.clone();
-                            self.push_word(&ticks)?;
-                            // Don't set raw — inline verbatim content should wrap like normal text
+                            self.verbatim_text = Some(String::new());
                         } else {
-                            let ticks = self.verbatim_ticks.clone();
-                            self.push_word(&ticks)?;
+                            self.render_verbatim(out)?;
                         }
                     }
                     "inline_math" => {
@@ -1042,7 +1074,9 @@ impl<'a> FmtWriter<'a> {
                 match annot.as_str() {
                     "str" => {
                         let text = self.src(event);
-                        if self.raw {
+                        if let Some(verbatim) = &mut self.verbatim_text {
+                            verbatim.push_str(&text);
+                        } else if self.raw {
                             // First str in code_block without language: close the ``` line
                             if self.code_block_need_lang {
                                 self.wrap(out)?;
@@ -1071,10 +1105,14 @@ impl<'a> FmtWriter<'a> {
                         }
                     }
                     "soft_break" => {
-                        if !self.pending_word.is_empty() {
-                            self.commit_word(true, out)?;
+                        if let Some(verbatim) = &mut self.verbatim_text {
+                            verbatim.push('\n');
+                        } else {
+                            if !self.pending_word.is_empty() {
+                                self.commit_word(true, out)?;
+                            }
+                            self.wrap(out)?;
                         }
-                        self.wrap(out)?;
                     }
                     "hard_break" => {
                         if !self.pending_word.is_empty() {
