@@ -5,11 +5,10 @@
 //! Labels and footnotes retain document scope; headings and IDs include incoming
 //! links. Call on a blocking worker because out-of-index targets can require I/O.
 use super::{
-    links::{Resolution, Resolver},
+    links::{same_document, Resolution, Resolver},
     Document, SymbolKind,
 };
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use url::Url;
 
 pub struct Location {
     pub uri: String,
@@ -20,16 +19,6 @@ pub struct Location {
 pub struct References {
     documents: HashMap<String, Arc<Document>>,
     resolver: Resolver,
-}
-
-fn same_document(left: &str, right: &str) -> bool {
-    match (Url::parse(left), Url::parse(right)) {
-        (Ok(left), Ok(right)) => match (left.to_file_path(), right.to_file_path()) {
-            (Ok(left), Ok(right)) => left == right,
-            _ => left == right,
-        },
-        _ => left == right,
-    }
 }
 
 impl References {

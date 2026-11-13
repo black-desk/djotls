@@ -4,7 +4,7 @@
 //! Plan semantic symbol renames against immutable workspace snapshots.
 //! This module returns source edits; it never writes files.
 use super::{
-    links::{Resolution, Resolver},
+    links::{same_document, Resolution, Resolver},
     normalize_label, Document, SymbolKind,
 };
 use std::{collections::HashMap, ops::Range, sync::Arc};
@@ -122,9 +122,17 @@ impl Rename {
                 .definitions
                 .iter()
                 .position(|d| d.kind == SymbolKind::Anchor && d.name_range == definition)?;
-            let mut target = Self::definition_target(uri.as_str(), document.clone(), index)?;
+            // Reuse the authoritative snapshot's URI so versioned edits still
+            // address the open buffer when the link encodes its path differently.
+            let uri = self
+                .documents
+                .keys()
+                .find(|known| same_document(known, uri.as_str()))
+                .cloned()
+                .unwrap_or_else(|| uri.to_string());
+            let mut target = Self::definition_target(&uri, document.clone(), index)?;
             target.selection = selection;
-            self.documents.insert(uri.to_string(), document);
+            self.documents.insert(uri, document);
             return Some(target);
         }
         let definition = doc
@@ -287,7 +295,7 @@ impl Rename {
                 else {
                     continue;
                 };
-                if resolved.as_str() != target.uri {
+                if !same_document(resolved.as_str(), &target.uri) {
                     continue;
                 }
                 let Some(key) = changed.get(&(selection.start, selection.end)) else {
