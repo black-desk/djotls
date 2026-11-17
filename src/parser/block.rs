@@ -687,7 +687,13 @@ impl EventParser {
             if let Some(ref mut ip) = ip.inline_parser {
                 ip.attribute_slices = Some(ac.extra.slices);
                 ip.reparse_attributes();
-                self.pos = ip.lastpos + 1;
+                // A container such as a block quote may already have consumed
+                // this line's prefix. Rewinding to the end of the rejected
+                // attribute would emit that prefix as paragraph text. A blank
+                // line must remain at the current position so it terminates
+                // the rejected attribute's paragraph.
+                self.pos = self.pos.max(ip.lastpos + 1);
+                return self.pos != self.starteol;
             }
         }
         true
@@ -902,7 +908,9 @@ impl EventParser {
                 for (i, m) in cell_matches.iter().enumerate() {
                     let mut e = m.endpos;
                     if i == cell_matches.len() - 1 && m.annot == "str" {
-                        while cp(&self.subject, e) == C_SPACE && e >= m.startpos {
+                        while e >= m.startpos
+                            && (cp(&self.subject, e) == C_SPACE || cp(&self.subject, e) == C_TAB)
+                        {
                             e -= 1;
                         }
                     }
@@ -1222,6 +1230,7 @@ impl EventParser {
 }
 
 const C_SPACE: u32 = 32;
+const C_TAB: u32 = 9;
 
 impl Iterator for EventParser {
     type Item = Event;
@@ -1254,6 +1263,59 @@ impl std::iter::FusedIterator for EventParser {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn events(input: &str) -> Vec<Event> {
+        EventParser::new(input.to_owned().into()).collect()
+    }
+
+    #[test]
+    fn rejected_attributes_keep_quote_prefix_out_of_paragraph_text() {
+        let input = "> {%\n> c\n> %}\n";
+        let events = events(input);
+        let strings: Vec<_> = events
+            .iter()
+            .filter(|event| event.annot == "str")
+            .map(|event| &input[event.startpos..=event.endpos])
+            .collect();
+
+        assert_eq!(strings, ["{%", "c", "%}"]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.annot == "soft_break")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn rejected_attributes_preserve_paragraph_breaks() {
+        let events = events("{%\n\nc\n");
+
+        assert_eq!(
+            events.iter().filter(|event| event.annot == "+para").count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.annot == "blankline")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn table_cells_trim_trailing_tabs() {
+        let input = "| a\t| b \t|\n";
+        let strings: Vec<_> = events(input)
+            .iter()
+            .filter(|event| event.annot == "str")
+            .map(|event| &input[event.startpos..=event.endpos])
+            .collect();
+
+        assert_eq!(strings, ["a", "b"]);
+    }
 
     #[test]
     fn iteration_does_not_parse_or_retain_the_whole_document() {
