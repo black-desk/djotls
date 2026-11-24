@@ -1018,6 +1018,140 @@ fn stdio_workspace_open_buffers_override_disk_until_close() {
     server.shutdown();
 }
 
+#[cfg(unix)]
+#[test]
+fn stdio_workspace_through_symlinked_parent_preserves_client_paths_and_buffers() {
+    let repo = Repository::new();
+    let aliases = Repository::new();
+    let parent = aliases.0.join("parent");
+    std::os::unix::fs::symlink(repo.0.parent().unwrap(), &parent).unwrap();
+    let root = parent.join(repo.0.file_name().unwrap());
+    let uri = |name: &str| {
+        url::Url::from_file_path(root.join(name))
+            .unwrap()
+            .to_string()
+    };
+    repo.write("docs/target.dj", "# Disk\n");
+    repo.write("incoming.dj", "[link](docs/target.dj#Draft)\n");
+    let target = uri("docs/target.dj");
+    // Starting below the root must retain the client's spelling of its parent.
+    let mut server = Server::start(
+        true,
+        true,
+        None,
+        Some(json!([{"uri":uri("docs"),"name":"aliased"}])),
+    );
+    let symbols = workspace_symbols(&mut server, "Disk");
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0]["location"]["uri"], target);
+    assert_eq!(symbols[0]["name"], "Disk (docs/target.dj#Disk)");
+    open_uri(&mut server, &target, "# Draft\n");
+    assert_eq!(symbol_names(&mut server), ["Draft"]);
+    let incoming = uri("incoming.dj");
+    let source = "[link](docs/target.dj#Draft)\n";
+    open_uri(&mut server, &incoming, source);
+    assert_eq!(server.diagnostics_for(&incoming)["diagnostics"], json!([]));
+    let definition = definition_uri(
+        &mut server,
+        &incoming,
+        source,
+        source.find('#').unwrap() + 1,
+    );
+    assert_eq!(definition["uri"], target);
+    assert_eq!(range_text("# Draft\n", &definition["range"]), "Draft");
+    let refs = references_uri(&mut server, &target, "# Draft\n", 2, true);
+    assert_eq!(refs.as_array().unwrap().len(), 2, "{refs}");
+    assert!(refs
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["uri"] == incoming));
+    assert!(refs.as_array().unwrap().iter().any(|r| r["uri"] == target));
+    // Unsaved files, even beneath missing directories, need no canonical path.
+    let unsaved = uri("new/nested/current.dj");
+    let partial = "[link](";
+    open_uri(&mut server, &unsaved, partial);
+    let items = complete_uri(&mut server, &unsaved, partial, partial.len());
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["detail"], "../../docs/target.dj#Draft");
+    server.notify(
+        "textDocument/didClose",
+        json!({"textDocument":{"uri":unsaved}}),
+    );
+    // A second workspace folder for the same physical repository adds no copy.
+    server.notify(
+        "workspace/didChangeWorkspaceFolders",
+        json!({"event":{"added":[repo.folder("")],"removed":[]}}),
+    );
+    assert_eq!(symbol_names(&mut server), ["Draft"]);
+    repo.write("docs/target.dj", "# Changed\n");
+    server.notify(
+        "textDocument/didClose",
+        json!({"textDocument":{"uri":target}}),
+    );
+    assert_eq!(symbol_names(&mut server), ["Changed"]);
+    assert_eq!(
+        workspace_symbols(&mut server, "Changed")[0]["location"]["uri"],
+        target
+    );
+    server.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn stdio_workspace_through_symlinked_root_keeps_rename_uris_and_versions() {
+    let repo = Repository::new();
+    let aliases = Repository::new();
+    let root = aliases.0.join("worktree");
+    std::os::unix::fs::symlink(&repo.0, &root).unwrap();
+    let uri = |name: &str| {
+        url::Url::from_file_path(root.join(name))
+            .unwrap()
+            .to_string()
+    };
+    repo.write("target.dj", "# Disk\n");
+    let source = "[link](target.dj#Draft)\n";
+    repo.write("incoming.dj", source);
+    let incoming = uri("incoming.dj");
+    let target = uri("target.dj");
+    let mut server = Server::start_with_init(
+        true,
+        true,
+        None,
+        Some(json!([{"uri":uri(""),"name":"aliased"}])),
+        json!({"capabilities":{"workspace":{
+            "fileOperations":{"willRename":true,"didRename":true},
+            "workspaceEdit":{"documentChanges":true}
+        }}}),
+    );
+    open_uri(&mut server, &target, "# Draft\n");
+    open_uri(&mut server, &incoming, source);
+    let response = rename_request(&mut server, &target, "# Draft\n", 2, "New");
+    assert!(response.get("error").is_none(), "{response}");
+    let edit = &response["result"];
+    let updated = apply_workspace_edit(edit, &[(&target, "# Draft\n"), (&incoming, source)]);
+    assert_eq!(updated[&target], "# New\n");
+    assert_eq!(updated[&incoming], "[link](target.dj#New)\n");
+    for file in edit["documentChanges"].as_array().unwrap() {
+        assert_eq!(file["textDocument"]["version"], 1);
+    }
+    // The destination does not exist: planning a file move must still work.
+    let moved = uri("moved.dj");
+    let params = file_move_params(&[(&target, &moved)]);
+    let edit = server.request("workspace/willRenameFiles", params.clone());
+    let updated = apply_workspace_edit(&edit, &[(&incoming, source)]);
+    assert_eq!(updated[&incoming], "[link](moved.dj#Draft)\n");
+    server.notify("textDocument/didChange", json!({"textDocument":{"uri":incoming,"version":2},"contentChanges":[{"text":updated[&incoming]}]}));
+    std::fs::rename(repo.0.join("target.dj"), repo.0.join("moved.dj")).unwrap();
+    server.notify("workspace/didRenameFiles", params);
+    assert_eq!(symbol_names(&mut server), ["Draft"]);
+    assert_eq!(
+        workspace_symbols(&mut server, "Draft")[0]["location"]["uri"],
+        moved
+    );
+    server.shutdown();
+}
+
 #[test]
 fn stdio_workspace_folder_changes_and_standalone_buffers() {
     let first = Repository::new();

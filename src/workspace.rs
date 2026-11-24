@@ -3,7 +3,12 @@
 
 //! Git worktree discovery and immutable disk snapshots, independent of LSP.
 use crate::analysis::Document;
-use std::{collections::HashMap, path::PathBuf, process::Command, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    process::Command,
+    sync::Arc,
+};
 
 #[derive(Default)]
 pub struct Workspace {
@@ -18,6 +23,7 @@ impl Workspace {
     pub fn scan(folders: Vec<PathBuf>, mut previous: HashMap<PathBuf, Arc<Document>>) -> Self {
         let mut documents = HashMap::new();
         let mut roots = Vec::new();
+        let mut physical_roots = HashSet::new();
         for folder in &folders {
             let output = Command::new("git")
                 .arg("-C")
@@ -32,9 +38,20 @@ impl Workspace {
                 continue;
             };
             let root = PathBuf::from(root.trim_end_matches('\n'));
-            if roots.contains(&root) {
+            let physical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+            if !physical_roots.insert(physical_root.clone()) {
                 continue;
             }
+            // Git resolves directory symlinks (e.g. /var -> /private/var on
+            // macOS), while LSP clients keep the workspace URI they opened.
+            // Find the root in that same spelling so relative links and disk
+            // snapshots agree with client buffers, including nonexistent files.
+            // Compare physical roots only to deduplicate workspace aliases.
+            let root = folder
+                .ancestors()
+                .find(|ancestor| ancestor.canonicalize().is_ok_and(|p| p == physical_root))
+                .map(PathBuf::from)
+                .unwrap_or(root);
             roots.push(root.clone());
             let output = Command::new("git")
                 .arg("-C")
