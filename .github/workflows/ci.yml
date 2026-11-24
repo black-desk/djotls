@@ -31,6 +31,11 @@ jobs:
       - uses: black-desk/workflows/format@master
 
   rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
     permissions:
       id-token: write
       contents: write
@@ -41,7 +46,7 @@ jobs:
     env:
       DJOTLS_REQUIRE_CONFORMANCE: "1"
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: black-desk/workflows/rust@master
 
