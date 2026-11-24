@@ -969,7 +969,18 @@ impl<'a> FmtWriter<'a> {
                         if is_open {
                             self.push_word("[")?;
                         } else {
-                            self.push_word("]")?;
+                            // An empty span is represented by `[]`. When it is
+                            // followed by a construct such as `{-`, parsing
+                            // the formatted text can otherwise treat the
+                            // brackets as ordinary text on the next pass.
+                            // Escape both delimiters so the output remains a
+                            // stable representation of the empty span.
+                            if self.pending_word.ends_with('[') {
+                                self.pending_word.pop();
+                                self.push_word("\\[\\]")?;
+                            } else {
+                                self.push_word("]")?;
+                            }
                         }
                     }
                     "linktext" => {
