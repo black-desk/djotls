@@ -313,6 +313,13 @@ and non-ignored untracked files with the exact `.dj` extension.
 Submodules and symbolic-link files are not traversed. Standalone open
 documents remain supported without Git.
 
+Workspace paths may contain directory symbolic links. The index retains
+the workspace path spelling instead of Git'}s resolved physical path,
+so document URIs and relative links agree with the editor. Multiple
+workspace folders referring to the same physical repository share one
+index, using the first folder'}s path spelling. Open documents should
+use that same spelling; independently opened aliases are not unified.
+
 Open buffers take precedence over disk snapshots, including unsaved
 changes. Closing a buffer restores disk content for searches,
 completion, navigation and diagnostics. Clients with file-watching
